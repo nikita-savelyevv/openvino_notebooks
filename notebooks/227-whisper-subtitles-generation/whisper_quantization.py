@@ -65,11 +65,11 @@ core = Core()
 
 SAVE_CALIBRATION_DATA = bool(0)
 LOAD_CALIBRATION_DATA = bool(0)
-# CALIBRATION_DATA_CACHE = 'calibration/{}/librispeech_asr_dummy_{}.pkl'
-# CALIBRATION_DATASET = load_dataset("hf-internal-testing/librispeech_asr_dummy", "clean", split="validation")
+CALIBRATION_DATA_CACHE = 'calibration/{}/librispeech_asr_dummy_{}.pkl'
+CALIBRATION_DATASET = load_dataset("hf-internal-testing/librispeech_asr_dummy", "clean", split="validation")
 # CALIBRATION_DATASET = reversed(load_dataset("hf-internal-testing/librispeech_asr_dummy", "clean", split="validation"))
-CALIBRATION_DATA_CACHE = 'calibration/librispeech_asr_clean_train100_{}.pkl'
-CALIBRATION_DATASET = load_dataset("librispeech_asr", "clean", split="train.100", streaming=True).take(30)
+# CALIBRATION_DATA_CACHE = 'calibration/librispeech_asr_clean_train100_{}.pkl'
+# CALIBRATION_DATASET = load_dataset("librispeech_asr", "clean", split="train.100", streaming=True).take(30)
 # CALIBRATION_DATA_CACHE = 'calibration/common_voice_11_0_{}.pkl'
 # CALIBRATION_DATASET = load_dataset("mozilla-foundation/common_voice_11_0", "en", split="train", streaming=True).take(100)
 # CALIBRATION_DATA_CACHE = 'calibration/{}/ashraq_youtube-transcription_{}.pkl'
@@ -91,6 +91,13 @@ OVC_API_DECODER = bool(1)
 
 ORIGINAL_ENCODER_MODEL_DIR = BASE_DIR / ('original_model_ovc_2' if OVC_API_ENCODER else 'original_model')
 ORIGINAL_DECODER_MODEL_DIR = BASE_DIR / ('original_model_ovc_2' if OVC_API_DECODER else 'original_model')
+# ORIGINAL_ENCODER_MODEL_DIR = 'quantized_models/large/original'
+# ORIGINAL_DECODER_MODEL_DIR = 'quantized_models/large/original'
+
+OV_WEIGHT_COMPRESSION = bool(1)
+
+MODEL_SIZE = "base"
+# MODEL_SIZE = "large"
 
 
 class OpenVINOAudioEncoder(torch.nn.Module):
@@ -622,7 +629,7 @@ def convert_pt_decoder_to_ov_through_onnx(encoder, decoder, onnx_save_dir, decod
     return ov_decoder
 
 
-def convert_pt_decoder_to_ov_directly(encoder, decoder, save_dir, decoder_already_patched):
+def convert_pt_decoder_to_ov_directly(encoder, decoder, save_dir, decoder_already_patched, filename="whisper_decoder"):
     if not decoder_already_patched:
         patch_whisper_decoder_for_export_ovc(decoder)
 
@@ -632,7 +639,7 @@ def convert_pt_decoder_to_ov_directly(encoder, decoder, save_dir, decoder_alread
     logits, kv_cache = decoder(tokens, audio_features, kv_cache=None)
     tokens = torch.ones((5, 1), dtype=torch.int64)
     decoder_model = openvino.tools.ovc.convert_model(decoder, example_input=(tokens, audio_features, kv_cache))
-    ov.serialize(decoder_model, save_dir / "whisper_decoder.xml")
+    ov.serialize(decoder_model, save_dir / f"{filename}.xml")
 
 
 def filter_decoder_init_data():
@@ -714,7 +721,8 @@ def arg_logger(func):
 
 
 def run_benchmark(model_path: Path, shape: str = None, verbose: bool = True) -> float:
-    command = f"~/venvs/ov_notebooks/bin/benchmark_app -m {model_path} -d CPU -api async -t 15 -hint latency"
+    time = 15 if MODEL_SIZE == "base" else 60
+    command = f"~/venvs/ov_notebooks/bin/benchmark_app -m {model_path} -d CPU -api async -t {time} -hint latency"
     report_folder = model_path.parent / f'report_{model_path.stem}'
     if not report_folder.exists():
         report_folder.mkdir(parents=True)
@@ -913,7 +921,7 @@ def quantize(save_dir, task, encoder_compression, decoder_compression, use_pot, 
     nncf_logger.addHandler(logging.FileHandler(log_file_path))
     nncf_logger.setLevel(logging.INFO)
 
-    model = whisper.load_model("base")
+    model = whisper.load_model(MODEL_SIZE)
     model.to("cpu")
     model.eval()
     original_encoder, original_decoder = model.encoder, model.decoder
@@ -922,34 +930,41 @@ def quantize(save_dir, task, encoder_compression, decoder_compression, use_pot, 
                       calibration_beam_search, calibration_beam_size, sample_from_ends, audio_sample_duration,
                       n_samples_per_video)
 
-    compressed_model_path = BASE_DIR / save_dir
+    compressed_model_dir = BASE_DIR / save_dir
 
     #
     # Encoder quantization
     #
-
-    advanced_parameters = AdvancedQuantizationParameters(
-        backend_params={"use_pot": use_pot},
-        overflow_fix=OverflowFix.DISABLE,
-        # disable overflow fix (can lead to accuracy drop on legacy platforms w/o DL Boost),
-        smooth_quant_alpha=sq_alpha_encoder
-    )
-    logger.info(advanced_parameters)
-
+    compressed_encoder_path = compressed_model_dir / "whisper_encoder.xml"
     if encoder_compression == "weights":
-        if OVC_API_ENCODER:
-            compressed_encoder = nncf.compress_weights(model.encoder, use_fake_quantize=False)
-            convert_pt_encoder_to_ov_directly(compressed_encoder, compressed_model_path)
+        if OV_WEIGHT_COMPRESSION:
+            if OVC_API_DECODER:
+                encoder = OpenVINOAudioEncoder(core, BASE_DIR / ORIGINAL_ENCODER_MODEL_DIR / 'whisper_encoder.xml')
+                compressed_encoder = nncf.compress_weights(encoder.model)
+                ov.serialize(compressed_encoder, str(compressed_encoder_path))
+            else:
+                raise Exception("Not implemented yet")
         else:
-            compressed_encoder = nncf.compress_weights(model.encoder, use_fake_quantize=True)
-            compressed_encoder = convert_pt_encoder_to_ov_through_onnx(compressed_encoder, compressed_model_path)
-            quantized_model_path = compressed_model_path / "whisper_encoder.xml"
-            ov.serialize(compressed_encoder, str(quantized_model_path))
+            if OVC_API_ENCODER:
+                compressed_encoder = nncf.compress_weights(model.encoder, use_fake_quantize=False)
+                convert_pt_encoder_to_ov_directly(compressed_encoder, compressed_model_dir)
+            else:
+                compressed_encoder = nncf.compress_weights(model.encoder, use_fake_quantize=True)
+                compressed_encoder = convert_pt_encoder_to_ov_through_onnx(compressed_encoder, compressed_model_dir)
+                ov.serialize(compressed_encoder, str(compressed_encoder_path))
     else:
         del model.encoder
         model.encoder = OpenVINOAudioEncoder(core, BASE_DIR / ORIGINAL_ENCODER_MODEL_DIR / 'whisper_encoder.xml')
 
         if encoder_compression == "quantization":
+            advanced_parameters = AdvancedQuantizationParameters(
+                backend_params={"use_pot": use_pot},
+                overflow_fix=OverflowFix.DISABLE,
+                # disable overflow fix (can lead to accuracy drop on legacy platforms w/o DL Boost),
+                smooth_quant_alpha=sq_alpha_encoder
+            )
+            logger.info(advanced_parameters)
+
             quantization_dataset = nncf.Dataset(list(reversed(encoder_init_data)) if reverse_encoder_calibration_data
                                                 else encoder_init_data)
             if max_encoder_calibration_samples is None:
@@ -970,70 +985,82 @@ def quantize(save_dir, task, encoder_compression, decoder_compression, use_pot, 
         else:
             raise Exception
 
-        quantized_model_path = compressed_model_path / "whisper_encoder.xml"
-        ov.serialize(compressed_encoder, str(quantized_model_path))
+        ov.serialize(compressed_encoder, str(compressed_encoder_path))
 
     #
     # Decoder quantization
     #
-
-    # Best combination of parameters by htune:
-    # preset = QuantizationPreset.MIXED,
-    # advanced_parameters:
-    #   weights_range_estimator_params = RangeEstimatorParameters(
-    #       min=StatisticsCollectorParameters(statistics_type=StatisticsType.MIN, aggregator_type=None, clipping_value=None, quantile_outlier_prob=0.0001),
-    #       max=StatisticsCollectorParameters(statistics_type=StatisticsType.MAX, aggregator_type=None, clipping_value=None, quantile_outlier_prob=0.0001)),
-    #   activations_range_estimator_params = RangeEstimatorParameters(
-    #       min=StatisticsCollectorParameters(statistics_type=StatisticsType.MIN, aggregator_type=AggregatorType.MIN, clipping_value=None, quantile_outlier_prob=0.0001),
-    #       max=StatisticsCollectorParameters(statistics_type=StatisticsType.QUANTILE, aggregator_type=AggregatorType.MEAN, clipping_value=None, quantile_outlier_prob=0.001))
-    advanced_parameters = AdvancedQuantizationParameters(
-        backend_params={"use_pot": use_pot},
-        overflow_fix=OverflowFix.DISABLE,
-        # disable overflow fix (can lead to accuracy drop on legacy platforms w/o DL Boost),
-        smooth_quant_alpha=sq_alpha_decoder,
-        inplace_statistics=inplace_statistics_decoder,
-        # weights_range_estimator_params=RangeEstimatorParameters(
-        #     min=StatisticsCollectorParameters(statistics_type=StatisticsType.MIN, quantile_outlier_prob=1e-4),
-        #     max=StatisticsCollectorParameters(statistics_type=StatisticsType.MAX, quantile_outlier_prob=1e-4),
-        # ),
-        # activations_range_estimator_params=RangeEstimatorParameters(
-        #     min=StatisticsCollectorParameters(
-        #         statistics_type=StatisticsType.MIN, aggregator_type=AggregatorType.MIN, quantile_outlier_prob=1e-4
-        #     ),
-        #     max=StatisticsCollectorParameters(
-        #         statistics_type=StatisticsType.QUANTILE, aggregator_type=AggregatorType.MEAN, quantile_outlier_prob=1e-4
-        #     ),
-        # ),
-    )
-    logger.info(advanced_parameters)
-
+    compressed_decoder_path = compressed_model_dir / "whisper_decoder.xml"
     if decoder_compression == "weights":
         from whisper.model import Linear
         register_module()(Linear)
-        model.decoder.linear = Linear(512, 51865, bias=False)
+        if MODEL_SIZE == "base":
+            dim = 512
+        elif MODEL_SIZE == "large":
+            dim = 1280
+        else:
+            raise Exception("Unknown model size")
+        model.decoder.linear = Linear(dim, 51865, bias=False)
         model.decoder.linear.weight = model.decoder.token_embedding.weight
 
-        if OVC_API_DECODER:
-            patch_whisper_decoder_for_export_ovc(model.decoder)
-            compressed_decoder = nncf.compress_weights(model.decoder, use_fake_quantize=False)
-            # compressed_decoder = model.decoder
-            # logger.info(compressed_decoder)
-            convert_pt_decoder_to_ov_directly(original_encoder, compressed_decoder, compressed_model_path,
-                                              decoder_already_patched=True)
+        if OV_WEIGHT_COMPRESSION:
+            if OVC_API_DECODER:
+                convert_pt_decoder_to_ov_directly(original_encoder, model.decoder, compressed_model_dir,
+                                                  decoder_already_patched=False, filename="whisper_decoder_with_linear")
+                decoder = OpenVINOTextDecoder(core, compressed_model_dir / 'whisper_decoder_with_linear.xml')
+                compressed_decoder = nncf.compress_weights(decoder.model)
+                ov.serialize(compressed_decoder, str(compressed_decoder_path))
+            else:
+                raise Exception("Not implemented yet")
         else:
-            patch_whisper_decoder_for_export(model.decoder)
-            compressed_decoder = nncf.compress_weights(model.decoder, use_fake_quantize=True)
-            compressed_decoder = convert_pt_decoder_to_ov_through_onnx(original_encoder, compressed_decoder,
-                                                                       compressed_model_path,
-                                                                       decoder_already_patched=True)
-            quantized_model_path = compressed_model_path / "whisper_decoder.xml"
-            ov.serialize(compressed_decoder, str(quantized_model_path))
+            if OVC_API_DECODER:
+                patch_whisper_decoder_for_export_ovc(model.decoder)
+                compressed_decoder = nncf.compress_weights(model.decoder, use_fake_quantize=False)
+                convert_pt_decoder_to_ov_directly(original_encoder, compressed_decoder, compressed_model_dir,
+                                                  decoder_already_patched=True)
+            else:
+                patch_whisper_decoder_for_export(model.decoder)
+                compressed_decoder = nncf.compress_weights(model.decoder, use_fake_quantize=True)
+                compressed_decoder = convert_pt_decoder_to_ov_through_onnx(original_encoder, compressed_decoder,
+                                                                           compressed_model_dir,
+                                                                           decoder_already_patched=True)
+                ov.serialize(compressed_decoder, str(compressed_decoder_path))
     else:
         patch_whisper_for_ov_inference(model)
         del model.decoder
         model.decoder = OpenVINOTextDecoder(core, BASE_DIR / ORIGINAL_DECODER_MODEL_DIR / 'whisper_decoder.xml')
 
         if decoder_compression == "quantization":
+            # Best combination of parameters by htune:
+            # preset = QuantizationPreset.MIXED,
+            # advanced_parameters:
+            #   weights_range_estimator_params = RangeEstimatorParameters(
+            #       min=StatisticsCollectorParameters(statistics_type=StatisticsType.MIN, aggregator_type=None, clipping_value=None, quantile_outlier_prob=0.0001),
+            #       max=StatisticsCollectorParameters(statistics_type=StatisticsType.MAX, aggregator_type=None, clipping_value=None, quantile_outlier_prob=0.0001)),
+            #   activations_range_estimator_params = RangeEstimatorParameters(
+            #       min=StatisticsCollectorParameters(statistics_type=StatisticsType.MIN, aggregator_type=AggregatorType.MIN, clipping_value=None, quantile_outlier_prob=0.0001),
+            #       max=StatisticsCollectorParameters(statistics_type=StatisticsType.QUANTILE, aggregator_type=AggregatorType.MEAN, clipping_value=None, quantile_outlier_prob=0.001))
+            advanced_parameters = AdvancedQuantizationParameters(
+                backend_params={"use_pot": use_pot},
+                overflow_fix=OverflowFix.DISABLE,
+                # disable overflow fix (can lead to accuracy drop on legacy platforms w/o DL Boost),
+                smooth_quant_alpha=sq_alpha_decoder,
+                inplace_statistics=inplace_statistics_decoder,
+                # weights_range_estimator_params=RangeEstimatorParameters(
+                #     min=StatisticsCollectorParameters(statistics_type=StatisticsType.MIN, quantile_outlier_prob=1e-4),
+                #     max=StatisticsCollectorParameters(statistics_type=StatisticsType.MAX, quantile_outlier_prob=1e-4),
+                # ),
+                # activations_range_estimator_params=RangeEstimatorParameters(
+                #     min=StatisticsCollectorParameters(
+                #         statistics_type=StatisticsType.MIN, aggregator_type=AggregatorType.MIN, quantile_outlier_prob=1e-4
+                #     ),
+                #     max=StatisticsCollectorParameters(
+                #         statistics_type=StatisticsType.QUANTILE, aggregator_type=AggregatorType.MEAN, quantile_outlier_prob=1e-4
+                #     ),
+                # ),
+            )
+            logger.info(advanced_parameters)
+
             quantization_dataset = nncf.Dataset(list(reversed(decoder_init_data)) if reverse_decoder_calibration_data
                                                 else decoder_init_data)
             if decoder_ignored_scope is None and ignore_logits:
@@ -1057,34 +1084,32 @@ def quantize(save_dir, task, encoder_compression, decoder_compression, use_pot, 
         else:
             raise Exception
 
-        quantized_model_path = compressed_model_path / "whisper_decoder.xml"
-        ov.serialize(compressed_decoder, str(quantized_model_path))
+        ov.serialize(compressed_decoder, str(compressed_decoder_path))
 
-    return compressed_model_path
+    return compressed_model_dir
 
 
 @arg_logger
 def benchmark(model_path):
+    if MODEL_SIZE == "base":
+        dim = 512
+    elif MODEL_SIZE == "large":
+        dim = 1280
+    else:
+        raise Exception("Unknown model size")
 
-    model = whisper.load_model("base")
+    model = whisper.load_model(MODEL_SIZE)
     model.to("cpu")
     model.eval()
     patch_whisper_for_ov_inference(model)
     model.encoder = OpenVINOAudioEncoder(core, model_path / "whisper_encoder.xml")
     model.decoder = OpenVINOTextDecoder(core, model_path / "whisper_decoder.xml")
 
-    if OVC_API_DECODER:
-        decoder_shape = 'x[5,1],xa[5,1500,512],'
-    else:
-        decoder_shape = 'tokens[5,1],audio_features[5,1500,512],'
-
-    if OVC_API_ENCODER:
-        encoder_shape = 'x[1,80,3000]'
-    else:
-        encoder_shape = None
+    decoder_shape = f'x[5,1],xa[5,1500,{dim}],' if OVC_API_DECODER else f'tokens[5,1],audio_features[5,1500,{dim}],'
+    encoder_shape = 'x[1,80,3000]' if OVC_API_ENCODER else None
 
     input_names = [next(iter(inp.names)) for inp in model.decoder.model.inputs][2:]
-    decoder_shape += ','.join([f"{name}[5,1,512]" for name in input_names])
+    decoder_shape += ','.join([f"{name}[5,1,{dim}]" for name in input_names])
 
     logger.info(f'Benchmarking model {model_path}')
     encoder_fps = run_benchmark(Path(model_path) / "whisper_encoder.xml", verbose=True, shape=encoder_shape)
@@ -1102,7 +1127,7 @@ def transcribe_video(model_path, video_path, task, beam_search, with_timestamps,
 
     logger.info(f'Transcribing model from path {model_path}')
 
-    model = whisper.load_model("base")
+    model = whisper.load_model(MODEL_SIZE)
     model.to("cpu")
     model.eval()
     patch_whisper_for_ov_inference(model)
@@ -1148,7 +1173,7 @@ def validate_model(model_path, task, beam_search, with_timestamps, trim=False, t
                    print_predictions=False):
 
     logger.info(f'Validating model {model_path} with temperatures: {temperatures}')
-    model = whisper.load_model("base")
+    model = whisper.load_model(MODEL_SIZE)
     model.to("cpu")
     model.eval()
     patch_whisper_for_ov_inference(model)
@@ -1202,7 +1227,7 @@ def quantize_decoder_with_accuracy_control(model_path, save_dir, task, sq_alpha_
     nncf_logger.addHandler(logging.FileHandler(log_file_path))
     nncf_logger.setLevel(logging.INFO)
 
-    model = whisper.load_model("base")
+    model = whisper.load_model(MODEL_SIZE)
     model.to("cpu")
     model.eval()
     patch_whisper_for_ov_inference(model)
@@ -1307,42 +1332,42 @@ WITH_TIMESTAMPS = bool(1)
 
 
 # compressed_model_path = quantize("calibration_datasets/jamescalam_youtube-transcriptions/translate/60_duration-30_beam-search-2",
-# compressed_model_path = quantize("calibration_datasets/librispeech_asr_train100_clean/translate/whisper_develop/30",
-#                                  task=TASK,
-#                                  # encoder_compression="weights",
-#                                  encoder_compression="quantization",
-#                                  # encoder_compression=None,
-#                                  # decoder_compression="weights",
-#                                  decoder_compression="quantization",
-#                                  # decoder_compression=None,
-#                                  use_pot=bool(0),
-#                                  sq_alpha_encoder=0.50,
-#                                  sq_alpha_decoder=0.95,
-#                                  ignore_logits=bool(0),
-#                                  inplace_statistics_decoder=bool(1),
-#                                  max_encoder_calibration_samples=None,
-#                                  max_decoder_calibration_samples=None,
-#                                  reverse_encoder_calibration_data=bool(0),
-#                                  reverse_decoder_calibration_data=bool(0),
-#                                  filter_init_data=bool(0),
-#                                  decoder_ignored_scope=None,
-#
-#                                  num_calibration_samples=30,
-#                                  calibration_beam_search=bool(0),
-#                                  calibration_beam_size=5,
-#                                  sample_from_ends=bool(0),
-#                                  audio_sample_duration=30,
-#                                  n_samples_per_video=1  # double it if sample_from_ends=True
-#                                  )
-# transcribe_video(compressed_model_path, video_path, task=TASK, beam_search=bool(0), with_timestamps=bool(1))
+compressed_model_path = quantize("quantized_models/large/weights_ov_base",
+                                 task=TASK,
+                                 encoder_compression="weights",
+                                 # encoder_compression="quantization",
+                                 # encoder_compression=None,
+                                 decoder_compression="weights",
+                                 # decoder_compression="quantization",
+                                 # decoder_compression=None,
+                                 use_pot=bool(0),
+                                 sq_alpha_encoder=0.50,
+                                 sq_alpha_decoder=0.95,
+                                 ignore_logits=bool(0),
+                                 inplace_statistics_decoder=bool(1),
+                                 max_encoder_calibration_samples=None,
+                                 max_decoder_calibration_samples=None,
+                                 reverse_encoder_calibration_data=bool(0),
+                                 reverse_decoder_calibration_data=bool(0),
+                                 filter_init_data=bool(0),
+                                 decoder_ignored_scope=None,
+
+                                 num_calibration_samples=30,
+                                 calibration_beam_search=bool(0),
+                                 calibration_beam_size=5,
+                                 sample_from_ends=bool(0),
+                                 audio_sample_duration=30,
+                                 n_samples_per_video=1  # double it if sample_from_ends=True
+                                 )
+transcribe_video(compressed_model_path, video_path, task=TASK, beam_search=bool(0), with_timestamps=bool(1))
 # transcribe_video(compressed_model_path, video_path, task=TASK, beam_search=bool(1), with_timestamps=bool(1))
 # validate_model(compressed_model_path, task=TASK, beam_search=bool(0), with_timestamps=bool(1))
 # validate_model(compressed_model_path, task=TASK, beam_search=bool(1), with_timestamps=bool(1))
-# benchmark(compressed_model_path)
+benchmark(compressed_model_path)
 
-model_path = Path("./calibration_datasets/librispeech_asr_dummy/translate/whisper_develop/15")
-# model_path = Path("./original_model_ovc_2")
-benchmark(model_path)
+# model_path = Path("./calibration_datasets/librispeech_asr_dummy/translate/whisper_develop/15")
+# model_path = Path("./quantized_models/large/weights_ov")
+# benchmark(model_path)
 # transcribe_video(model_path, video_path, task=TASK, beam_search=bool(0), with_timestamps=bool(1))
 # transcribe_video(model_path, video_path, task=TASK, beam_search=bool(1), with_timestamps=bool(1))
 # validate_model(model_path, task=TASK, beam_search=bool(0), with_timestamps=bool(0), print_predictions=bool(1))
