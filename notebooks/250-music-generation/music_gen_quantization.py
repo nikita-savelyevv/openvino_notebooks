@@ -31,8 +31,8 @@ warnings.filterwarnings("ignore", category=TracerWarning)
 text_processor = AutoProcessor.from_pretrained("facebook/musicgen-small")
 
 SAMPLING_RATE = 32000
-SAMPLE_LENGTH = 8
-N_TOKENS = {2: 103, 4: 203, 8: 403}[SAMPLE_LENGTH]
+SAMPLE_LENGTH = 16
+N_TOKENS = {1: 53, 2: 103, 4: 203, 8: 403, 16: 803}[SAMPLE_LENGTH]
 
 core = Core()
 DEVICE = "AUTO"
@@ -440,25 +440,32 @@ model = MusicgenForConditionalGeneration.from_pretrained(
 
 # infer_model(model, "80s pop track with bassy drums and synth", "original.wav")
 
-# convert_to_ir(model)
+convert_to_ir(model)
 
 model = convert_to_ov_model(model)
 
+# 8 sec:
 # Total: 31 sec
 # Decoder: 26 sec (N_TOKENS - 1 calls)
+# 16 sec:
+# Total: 72 sec
+# Decoder: 65 sec (N_TOKENS - 1 calls)
 # infer_model(model, "80s pop track with bassy drums and synth", f"openvino_{SAMPLE_LENGTH}.wav")
 
-save_dir = Path("quantized/4_6/mixed_sq.15")
+save_dir = Path("quantized/1_40/mixed_sq.15")
 model = quantize(model,
                  save_dir=save_dir,
-                 n_calibration_samples=6,
+                 n_calibration_samples=40,
                  preset=QuantizationPreset.MIXED,
                  sq_alpha=0.15)
 
-# PTQ:
+# PTQ 8 sec:
 # Total: 25 sec
 # Decoder: 20 sec (N_TOKENS - 1 calls)
-# WC:
+# PTQ 16 sec:
+# Total: 58 sec
+# Decoder: 51 sec (N_TOKENS - 1 calls)
+# WC 8 sec:
 # Total: 30
 # Decoder: 25
-infer_model(model, "80s pop track with bassy drums and synth", save_dir / "result_4.wav")
+infer_model(model, "80s pop track with bassy drums and synth", save_dir / "result_9.wav")
