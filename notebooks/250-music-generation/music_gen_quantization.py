@@ -1,5 +1,7 @@
 import datetime
 import pickle
+import re
+import subprocess
 from collections import namedtuple
 import gc
 from contextlib import contextmanager
@@ -434,6 +436,31 @@ def quantize(model, save_dir, n_calibration_samples, preset, sq_alpha):
     return model
 
 
+def benchmark_text_decoder(model_path):
+    print("Running benchmark")
+    model = core.read_model(model_path)
+
+    inputs = model.inputs
+
+    shape = "input_ids[8,1],encoder_hidden_states[2,12,1024],encoder_attention_mask[2,12]"
+    for i in range((len(inputs) - 3) // 4):
+        for j in range(4):
+            shape += f",{inputs[3 + 4*i + j].any_name}"
+            shape += "[2,16,1,64]" if j < 2 else "[2,16,12,64]"
+
+    command = f"~/venvs/ov_notebooks/bin/benchmark_app -m {model_path} -d CPU -api async -t 60 -hint latency"
+    command += f' --report_type average_counters --report_folder={model_path.parent}'
+    command += f' --exec_graph_path={model_path.parent / model_path.stem}_exec_graph.xml'
+    command += f' -shape {shape}'
+    cmd_output = subprocess.check_output(command, shell=True)  # nosec
+    print(*str(cmd_output).split("\\n")[-9:-1], sep="\n")
+    match = re.search(r"Throughput\: (.+?) FPS", str(cmd_output))
+    return float(match.group(1))
+
+
+benchmark_text_decoder(Path("quantized/1_40/mixed_sq.15/text_decoder.xml"))
+exit(0)
+
 model = MusicgenForConditionalGeneration.from_pretrained(
     "facebook/musicgen-small", torchscript=True, return_dict=False).to("cpu").eval()
 # print("tokens:", SAMPLE_LENGTH * model.config.audio_encoder.frame_rate + 3)
@@ -452,7 +479,7 @@ model = convert_to_ov_model(model)
 # Decoder: 65 sec (N_TOKENS - 1 calls)
 # infer_model(model, "80s pop track with bassy drums and synth", f"openvino_{SAMPLE_LENGTH}.wav")
 
-save_dir = Path("quantized/1_40/mixed_sq.15")
+save_dir = Path("quantized/8_2/mixed_sq.15")
 model = quantize(model,
                  save_dir=save_dir,
                  n_calibration_samples=40,
