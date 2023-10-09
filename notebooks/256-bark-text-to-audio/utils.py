@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import torch
 import openvino as ov
 
@@ -78,12 +80,17 @@ class OVBarkTextEncoder:
     def __init__(self, core, device, model_path1, model_path2):
         self.compiled_model1 = core.compile_model(model_path1, device)
         self.compiled_model2 = core.compile_model(model_path2, device)
+        self.total_time1 = 0
+        self.total_time2 = 0
 
     def __call__(self, input_ids, past_kv=None):
+        start_time = datetime.now()
         if past_kv is None:
             outputs = self.compiled_model1(input_ids)
+            self.total_time1 += (datetime.now() - start_time).total_seconds()
         else:
             outputs = self.compiled_model2([input_ids, *past_kv])
+            self.total_time2 += (datetime.now() - start_time).total_seconds()
         logits, kv_cache = self.postprocess_outputs(outputs, past_kv is None)
         return logits, kv_cache
 
@@ -103,11 +110,14 @@ class OVBarkTextEncoder:
 class OVBarkEncoder:
     def __init__(self, core, device, model_path):
         self.compiled_model = core.compile_model(model_path, device)
+        self.total_time = 0
 
     def __call__(self, idx, past_kv=None):
         if past_kv is None:
             past_kv = self._init_past_kv()
+        start_time = datetime.now()
         outs = self.compiled_model([idx, *past_kv])
+        self.total_time += (datetime.now() - start_time).total_seconds()
         return self.postprocess_outputs(outs)
 
     def postprocess_outputs(self, outs):
@@ -140,13 +150,17 @@ class OVBarkFineEncoder:
                 core.compile_model(model_dir / f"bark_fine_lm_{i}.xml", device)
             )
         self.lm_heads = lm_heads
+        self.total_time_feats = 0
+        self.total_time_lm_heads = [0] * len(lm_heads)
 
     def __call__(self, pred_idx, idx):
-        feats = self.feats_compiled_model([ov.Tensor(pred_idx), ov.Tensor(idx)])[
-            self.feats_out
-        ]
+        start_time = datetime.now()
+        feats = self.feats_compiled_model([ov.Tensor(pred_idx), ov.Tensor(idx)])[self.feats_out]
+        self.total_time_feats += (datetime.now() - start_time).total_seconds()
         lm_id = pred_idx - 1
+        start_time = datetime.now()
         logits = self.lm_heads[int(lm_id)](feats)[0]
+        self.total_time_lm_heads[int(lm_id)] += (datetime.now() - start_time).total_seconds()
         return logits
 
 

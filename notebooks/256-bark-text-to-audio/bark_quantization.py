@@ -132,3 +132,8 @@ audio_duration_s = audio_array.shape[0] / SAMPLE_RATE
 wavfile.write("audio.wav", SAMPLE_RATE, audio_array)
 
 print(f"took {generation_duration_s:.0f}s to generate {audio_duration_s:.0f}s of audio")
+
+print(f"OV text model time 1: {ov_text_model.total_time1} 2: {ov_text_model.total_time2}")
+print(f"OV coarse model time: {ov_coarse_model.total_time}")
+print(f"OV fine model feature extractor time: {ov_fine_model.total_time_feats} "
+      f"lm heads: {ov_fine_model.total_time_lm_heads}")
