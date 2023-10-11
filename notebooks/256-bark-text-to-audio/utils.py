@@ -1,12 +1,19 @@
+from contextlib import contextmanager
+from pathlib import Path
+from typing import List, Optional, Union, Dict
 from datetime import datetime
 
 import torch
+import torch.nn.functional as F
 import openvino as ov
 
 import tqdm
 import numpy as np
 
 from logging import getLogger
+
+from openvino._pyopenvino import Tensor
+
 logger = getLogger(__file__)
 
 
@@ -27,9 +34,20 @@ from bark.generation import (
     N_FINE_CODEBOOKS,
     COARSE_SEMANTIC_PAD_TOKEN,
 )
-import torch.nn.functional as F
-from typing import List, Optional, Union, Dict
-from bark.generation import load_model, codec_decode, _flatten_codebooks
+from bark.generation import codec_decode, _flatten_codebooks
+
+
+COLLECT_FORWARD_DATA = False
+
+
+@contextmanager
+def forward_data_collection():
+    global COLLECT_FORWARD_DATA
+    try:
+        COLLECT_FORWARD_DATA = True
+        yield
+    finally:
+        COLLECT_FORWARD_DATA = False
 
 
 class TextEncoderModel(torch.nn.Module):
@@ -78,18 +96,36 @@ class FineModel(torch.nn.Module):
 
 class OVBarkTextEncoder:
     def __init__(self, core, device, model_path1, model_path2):
-        self.compiled_model1 = core.compile_model(model_path1, device)
-        self.compiled_model2 = core.compile_model(model_path2, device)
+        self.model1 = core.read_model(model_path1)
+        self.model2 = core.read_model(model_path2)
+        self.compiled_model1 = core.compile_model(self.model1, device)
+        self.compiled_model2 = core.compile_model(self.model2, device)
         self.total_time1 = 0
         self.total_time2 = 0
+        self.forward_data = []
 
     def __call__(self, input_ids, past_kv=None):
-        start_time = datetime.now()
         if past_kv is None:
+            start_time = datetime.now()
             outputs = self.compiled_model1(input_ids)
             self.total_time1 += (datetime.now() - start_time).total_seconds()
         else:
-            outputs = self.compiled_model2([input_ids, *past_kv])
+            inputs = [input_ids, *past_kv]
+            if COLLECT_FORWARD_DATA:
+                self.forward_data.append(inputs)
+
+            # save_dir = Path("models/text_encoder_small/inputs")
+            # input_save_dir = save_dir / "idx"
+            # input_save_dir.mkdir(parents=True, exist_ok=True)
+            # np.save(input_save_dir / f"{max(past_kv[0].shape[2] - 257, 0)}.npy", input_ids.data)
+            # for i, x in enumerate(past_kv):
+            #     input_save_dir = save_dir / self.model2.inputs[i + 1].any_name
+            #     input_save_dir.mkdir(parents=True, exist_ok=True)
+            #     x = x if isinstance(x, np.ndarray) else x.data
+            #     np.save(input_save_dir / f"{max(x.shape[2] - 257, 0)}.npy", x)
+
+            start_time = datetime.now()
+            outputs = self.compiled_model2(inputs, share_outputs=True)
             self.total_time2 += (datetime.now() - start_time).total_seconds()
         logits, kv_cache = self.postprocess_outputs(outputs, past_kv is None)
         return logits, kv_cache
@@ -109,14 +145,37 @@ class OVBarkTextEncoder:
 
 class OVBarkEncoder:
     def __init__(self, core, device, model_path):
-        self.compiled_model = core.compile_model(model_path, device)
+        self.model = core.read_model(model_path)
+
+        OV_CONFIG = {'PERFORMANCE_HINT': 'LATENCY', 'NUM_STREAMS': '1', "CACHE_DIR": ""}
+        self.compiled_model = core.compile_model(self.model, device, OV_CONFIG)
         self.total_time = 0
+        self.forward_data = []
 
     def __call__(self, idx, past_kv=None):
         if past_kv is None:
             past_kv = self._init_past_kv()
+
+        inputs = [idx, *past_kv]
+        if COLLECT_FORWARD_DATA:
+            self.forward_data.append(inputs)
+
+        # for i in range(len(inputs)):
+        #     if isinstance(inputs[i], np.ndarray):
+        #         inputs[i] = Tensor(inputs[i], shared_memory=True)
+
+        # save_dir = Path("models/coarse_small/inputs2")
+        # input_save_dir = save_dir / "idx"
+        # input_save_dir.mkdir(exist_ok=True)
+        # np.save(input_save_dir / f"{max(past_kv[0].shape[2] - 256, 0)}.npy", idx)
+        # for i, x in enumerate(past_kv):
+        #     input_save_dir = save_dir / self.model.inputs[i + 1].any_name
+        #     input_save_dir.mkdir(exist_ok=True)
+        #     x = x if isinstance(x, np.ndarray) else x.data
+        #     np.save(input_save_dir / f"{max(x.shape[2] - 256, 0)}.npy", x)
+
         start_time = datetime.now()
-        outs = self.compiled_model([idx, *past_kv])
+        outs = self.compiled_model(inputs, share_outputs=True)
         self.total_time += (datetime.now() - start_time).total_seconds()
         return self.postprocess_outputs(outs)
 
