@@ -107,7 +107,7 @@ def quantize(model, save_model_path: Path, calibration_cache_path: Path,
             model.predictor.model.model,
             calibration_dataset=nncf.Dataset(calibration_data),
             preset=preset,
-            subset_size=0,
+            subset_size=len(calibration_data),
             fast_bias_correction=True,
             ignored_scope=nncf.IgnoredScope(
                 types=["Multiply", "Subtract", "Sigmoid"],  # ignore operations
