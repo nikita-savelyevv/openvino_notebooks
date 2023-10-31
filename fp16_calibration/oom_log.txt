@@ -1,0 +1,17 @@
+/home/guest/nsavelye/venvs/fp16_calibration/bin/python /home/guest/nsavelye/workspace/fp16_calibration/memory_leak_reproducer.py 
+INFO:nncf:NNCF initialized successfully. Supported frameworks detected: torch, onnx, openvino
+/home/guest/nsavelye/venvs/fp16_calibration/lib/python3.8/site-packages/transformers/deepspeed.py:23: FutureWarning: transformers.deepspeed module is deprecated and will be removed in a future version. Please import deepspeed modules directly from transformers.integrations
+  warnings.warn(
+The argument `trust_remote_code` is to be used along with export=True. It will be ignored.
+Compiling the model to GPU ...
+Starting. Total free memory: 50.41 / 62.55 GB.
+Iter 0 time 11.02 sec. Memory used by the current process: 11681 MB; 11681 MB (with children). Total free memory: 45.02 / 62.55 GB.
+Iter 1 time 10.96 sec. Memory used by the current process: 11892 MB; 11892 MB (with children). Total free memory: 39.96 / 62.55 GB.
+Iter 2 time 10.97 sec. Memory used by the current process: 12075 MB; 12075 MB (with children). Total free memory: 34.90 / 62.55 GB.
+Iter 3 time 11.00 sec. Memory used by the current process: 12269 MB; 12269 MB (with children). Total free memory: 29.87 / 62.55 GB.
+Iter 4 time 11.05 sec. Memory used by the current process: 12408 MB; 12408 MB (with children). Total free memory: 24.85 / 62.55 GB.
+Iter 5 time 11.02 sec. Memory used by the current process: 12548 MB; 12548 MB (with children). Total free memory: 19.86 / 62.55 GB.
+Iter 6 time 34.55 sec. Memory used by the current process: 12714 MB; 12714 MB (with children). Total free memory: 14.71 / 62.55 GB.
+Iter 7 time 243.64 sec. Memory used by the current process: 7765 MB; 7765 MB (with children). Total free memory: 9.70 / 62.55 GB.
+
+Process finished with exit code 137
