@@ -18,8 +18,8 @@ ops_to_track_map = {
 
 
 def rt_info_name_to_keep_orig_precision():
-    # return 'precise_0'
-    return 'disable_fp16_compression_0'
+    return 'precise_0'
+    # return 'disable_fp16_compression_0'
 
 
 def get_thresholds_per_op():
