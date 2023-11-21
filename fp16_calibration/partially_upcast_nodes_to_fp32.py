@@ -32,8 +32,8 @@ def get_thresholds_per_op():
 def partially_upcast_nodes_to_fp32(orig_model: Model, example_input: Union[List, Dict], half_type: str,
                                    batch_size: int = -1, thresholds_per_op: Dict[str, Tuple] = None,
                                    verbose: bool = False) -> Model:
-    assert half_type in ("fp16", "bf16")
-    device = "GPU" if half_type == "fp16" else "CPU"
+    assert half_type in ("f16", "bf16")
+    device = "GPU" if half_type == "f16" else "CPU"
 
     nodes_to_track_names = get_nodes_to_track(orig_model)
     nodes_with_errors_names = []
@@ -112,8 +112,8 @@ def is_decompression_convert(node: Node) -> bool:
 def infer_full_net_in_fp16(nodes_to_track: List[Node], orig_model: ov.Model, example_inputs: List,
                            half_type: str) -> List[Tuple]:
     core = ov.Core()
-    config = {"INFERENCE_PRECISION_HINT": "fp16"} if half_type == "fp16" else {}
-    exec_net = core.compile_model(orig_model, 'GPU' if half_type == "fp16" else "CPU", config=config)
+    exec_net = core.compile_model(orig_model, 'GPU' if half_type == "f16" else "CPU",
+                                  config={"INFERENCE_PRECISION_HINT": half_type})
     request = exec_net.create_infer_request()
     results = request.infer(example_inputs)
 
@@ -158,8 +158,7 @@ def infer_tracked_op(op: Node, input_vals: Tuple, device: str, precision: str) -
     new_op = ops_to_track_map[op.get_type_name()](*parameters, **op.get_attributes())
     ov_model = ov.Model([new_op], parameters)
 
-    config = {} if precision == "bf16" else {"INFERENCE_PRECISION_HINT": precision}
-    exec_net = ov.Core().compile_model(ov_model, device, config=config)
+    exec_net = ov.Core().compile_model(ov_model, device, config={"INFERENCE_PRECISION_HINT": precision})
     request = exec_net.create_infer_request()
     result = request.infer(input_vals)
     assert len(result) == 1
