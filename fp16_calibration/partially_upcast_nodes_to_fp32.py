@@ -29,19 +29,12 @@ def get_thresholds_per_op():
     }
 
 
-def inject_to_partially_upcast_nodes_to_fp32(orig, thresholds_per_op=None) -> Callable:  # orig type is OVModelForCausalLM
-    def new_start_async(inputs, shared_memory):
-        new_model = partially_upcast_nodes_to_fp32(orig.model, inputs, thresholds_per_op)
-        orig.model = new_model
-        orig.request = None
-        orig.compile()  # compile will set orig.request for OVModelForCausalLM
-        orig.request.start_async(inputs, shared_memory=shared_memory)
+def partially_upcast_nodes_to_fp32(orig_model: Model, example_input: Union[List, Dict], half_type: str,
+                                   batch_size: int = -1, thresholds_per_op: Dict[str, Tuple] = None,
+                                   verbose: bool = False) -> Model:
+    assert half_type in ("fp16", "bf16")
+    device = "GPU" if half_type == "fp16" else "CPU"
 
-    return new_start_async
-
-
-def partially_upcast_nodes_to_fp32(orig_model: Model, example_input: Union[List, Dict], batch_size: int = -1,
-                                   thresholds_per_op: Dict[str, Tuple] = None, verbose: bool = False) -> Model:
     nodes_to_track_names = get_nodes_to_track(orig_model)
     nodes_with_errors_names = []
     batch_size = len(nodes_to_track_names) if batch_size == -1 else batch_size
@@ -52,10 +45,10 @@ def partially_upcast_nodes_to_fp32(orig_model: Model, example_input: Union[List,
         nodes_to_track_batch = [name_to_node_map[node_name] for node_name in nodes_to_track_names_batch]
 
         insert_results_for_tracked_ops(model, nodes_to_track_batch)
-        fp16_full_net_infer_values_batch = infer_full_net_in_fp16(nodes_to_track_batch, model, example_input)
+        fp16_full_net_infer_values_batch = infer_full_net_in_fp16(nodes_to_track_batch, model, example_input, half_type)
 
-        fp16_infer_values_batch = infer_nodes_in_fp16(nodes_to_track_batch, fp16_full_net_infer_values_batch)
-        fp32_infer_values_batch = infer_nodes_in_fp32(nodes_to_track_batch, fp16_full_net_infer_values_batch)
+        fp16_infer_values_batch = infer_nodes(nodes_to_track_batch, fp16_full_net_infer_values_batch, device, half_type)
+        fp32_infer_values_batch = infer_nodes(nodes_to_track_batch, fp16_full_net_infer_values_batch, device, "f32")
 
         nodes_with_errors_names_batch = get_nodes_with_errors(nodes_to_track_batch, fp16_infer_values_batch,
                                                               fp32_infer_values_batch, thresholds_per_op, verbose)
@@ -116,10 +109,11 @@ def is_decompression_convert(node: Node) -> bool:
     return False
 
 
-def infer_full_net_in_fp16(nodes_to_track: List[Node], orig_model: ov.Model, example_inputs: List) -> List[Tuple]:
+def infer_full_net_in_fp16(nodes_to_track: List[Node], orig_model: ov.Model, example_inputs: List,
+                           half_type: str) -> List[Tuple]:
     core = ov.Core()
-    assert 'GPU' in core.available_devices
-    exec_net = core.compile_model(orig_model, 'GPU', config={"INFERENCE_PRECISION_HINT": "f16"})
+    config = {"INFERENCE_PRECISION_HINT": "fp16"} if half_type == "fp16" else {}
+    exec_net = core.compile_model(orig_model, 'GPU' if half_type == "fp16" else "CPU", config=config)
     request = exec_net.create_infer_request()
     results = request.infer(example_inputs)
 
@@ -145,21 +139,14 @@ def infer_full_net_in_fp16(nodes_to_track: List[Node], orig_model: ov.Model, exa
     return node_data_values
 
 
-def infer_nodes_in_fp32(nodes_to_track: List[Node], node_data_values: List[Tuple]) -> List:
+def infer_nodes(nodes_to_track: List[Node], node_data_values: List[Tuple], device: str, precision: str) -> List:
     results = []
     for node, value in zip(nodes_to_track, node_data_values):
-        results.append(infer_tracked_op_on_gpu(node, value[1:]))
+        results.append(infer_tracked_op(node, value[1:], device, precision))
     return results
 
 
-def infer_nodes_in_fp16(nodes_to_track: List[Node], node_data_values: List[Tuple]) -> List:
-    results = []
-    for node, value in zip(nodes_to_track, node_data_values):
-        results.append(infer_tracked_op_on_gpu(node, value[1:], precision='f16'))
-    return results
-
-
-def infer_tracked_op_on_gpu(op: Node, input_vals: Tuple, precision='f32') -> np.ndarray:
+def infer_tracked_op(op: Node, input_vals: Tuple, device: str, precision: str) -> np.ndarray:
     parameters = []
     for input_val in input_vals:
         parameters.append(Parameter(get_element_type(input_val.dtype), ov.PartialShape(input_val.shape)))
@@ -171,7 +158,8 @@ def infer_tracked_op_on_gpu(op: Node, input_vals: Tuple, precision='f32') -> np.
     new_op = ops_to_track_map[op.get_type_name()](*parameters, **op.get_attributes())
     ov_model = ov.Model([new_op], parameters)
 
-    exec_net = ov.Core().compile_model(ov_model, 'GPU', config={"INFERENCE_PRECISION_HINT": precision})
+    config = {} if precision == "bf16" else {"INFERENCE_PRECISION_HINT": precision}
+    exec_net = ov.Core().compile_model(ov_model, device, config=config)
     request = exec_net.create_infer_request()
     result = request.infer(input_vals)
     assert len(result) == 1

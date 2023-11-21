@@ -1,6 +1,8 @@
 import atexit
 from threading import Thread
 
+import torch
+
 from utils import SUPPORTED_MODELS
 from transformers import AutoConfig, TextIteratorStreamer
 from optimum.intel.openvino import OVModelForCausalLM
@@ -10,10 +12,12 @@ from transformers import AutoTokenizer
 import partially_upcast_nodes_to_fp32
 
 
-def run_generate(ov_model, tok, text, model_configuration, **generation_kwargs):
+def run_generate(ov_model, tok, text, model_configuration, pass_attention_mask, **generation_kwargs):
     tokenizer_kwargs = model_configuration.get("tokenizer_kwargs", {})
     input_tokens = tok(text, return_tensors="pt", **tokenizer_kwargs)
     input_ids = input_tokens.input_ids
+    if pass_attention_mask:
+        generation_kwargs["attention_mask"] = torch.ones_like(input_ids)
 
     streamer = TextIteratorStreamer(tok)
     generation_kwargs = dict(input_ids=input_ids, streamer=streamer, **generation_kwargs)
