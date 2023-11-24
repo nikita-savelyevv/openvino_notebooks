@@ -213,10 +213,20 @@ def compare_tensors(node: Node, a: np.ndarray, b: np.ndarray, new_thresholds_per
     rel_tol = thresholds[2]
 
     rel_diff_ratio = np.size(np.where(rel_error >= rel_threshold)) / out_size
-    if mean_rel_error < rel_tol:
-        return False
+    diff_too_large = mean_rel_error > rel_tol
+    # if mean_rel_error < rel_tol:
+    #     return False
     if rel_diff_ratio > rel_threshold_ratio:
         if verbose:
             print(f'Upcasted node {node.get_friendly_name()} with {rel_threshold:.2f} '
                   f'rel2_diff_ratio {rel_diff_ratio:.6f} and mean_rel_error {mean_rel_error:.6f}')
-        return True
+        diff_too_large &= True
+
+    # node_name = node.get_friendly_name().replace('/', '%')
+    # from pathlib import Path
+    # filepath_fp16 = Path(f"activations/{node_name}_fp16_{int(mean_rel_error > rel_tol)}_{int(rel_diff_ratio > rel_threshold_ratio)}.npy")
+    # filepath_fp32 = Path(f"activations/{node_name}_fp32_{int(mean_rel_error > rel_tol)}_{int(rel_diff_ratio > rel_threshold_ratio)}.npy")
+    # np.save(filepath_fp16, a)
+    # np.save(filepath_fp32, b)
+
+    return diff_too_large
