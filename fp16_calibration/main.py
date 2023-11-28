@@ -5,12 +5,14 @@ from transformers import AutoConfig, TextIteratorStreamer
 from optimum.intel.openvino import OVModelForCausalLM
 from pathlib import Path
 import openvino as ov
+from openvino.runtime import Tensor
 from transformers import AutoTokenizer
 import partially_upcast_nodes_to_fp32
 
 
-def run_generate(ov_model, tok, text, model_configuration, **generation_kwargs):
-    tokenizer_kwargs = model_configuration.get("tokenizer_kwargs", {})
+def run_generate(ov_model, tok, text, tokenizer_kwargs=None, **generation_kwargs):
+    if tokenizer_kwargs is None:
+        tokenizer_kwargs = {}
     input_tokens = tok(text, return_tensors="pt", **tokenizer_kwargs)
     input_ids = input_tokens.input_ids
 
@@ -26,9 +28,10 @@ def run_generate(ov_model, tok, text, model_configuration, **generation_kwargs):
     # return tok.batch_decode(answer)[0]
 
 
-def get_inputs_for_calibration(ov_model, tok, model_configuration, example_string):
-    from openvino.runtime import Tensor
-    inputs = dict(tok(example_string, return_tensors="np", **model_configuration.get("tokenizer_kwargs", {})))
+def get_inputs_for_calibration(ov_model, tok, example_string, tokenizer_kwargs=None):
+    if tokenizer_kwargs is None:
+        tokenizer_kwargs = {}
+    inputs = dict(tok(example_string, return_tensors="np", **tokenizer_kwargs))
     for input_name in ov_model.key_value_input_names:
         model_inputs = ov_model.model.input(input_name)
         shape = model_inputs.get_partial_shape()
