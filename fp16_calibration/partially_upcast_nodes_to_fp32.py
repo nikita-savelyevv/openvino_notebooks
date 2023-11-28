@@ -46,7 +46,7 @@ def partially_upcast_nodes_to_fp32(orig_model: Model, example_input: Union[List,
         nodes_to_track_batch = [name_to_node_map[node_name] for node_name in nodes_to_track_names_batch]
 
         insert_results_for_tracked_ops(model, nodes_to_track_batch)
-        fp16_full_net_infer_values_batch = infer_full_net_in_half(nodes_to_track_batch, model, example_input, half_type)
+        fp16_full_net_infer_values_batch = infer_full_net(nodes_to_track_batch, model, example_input)
 
         fp16_infer_values_batch = infer_nodes(nodes_to_track_batch, fp16_full_net_infer_values_batch, device, half_type)
         fp32_infer_values_batch = infer_nodes(nodes_to_track_batch, fp16_full_net_infer_values_batch, device, "f32")
@@ -110,11 +110,9 @@ def is_decompression_convert(node: Node) -> bool:
     return False
 
 
-def infer_full_net_in_half(nodes_to_track: List[Node], orig_model: ov.Model, example_inputs: List,
-                           half_type: str) -> List[Tuple]:
+def infer_full_net(nodes_to_track: List[Node], orig_model: ov.Model, example_inputs: List) -> List[Tuple]:
     core = ov.Core()
-    exec_net = core.compile_model(orig_model, 'GPU' if half_type == "f16" else "CPU",
-                                  config={"INFERENCE_PRECISION_HINT": half_type})
+    exec_net = core.compile_model(orig_model, "CPU", config={"INFERENCE_PRECISION_HINT": "f32"})
     request = exec_net.create_infer_request()
     results = request.infer(example_inputs)
 
