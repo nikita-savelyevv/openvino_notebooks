@@ -96,17 +96,26 @@ def plot_activation_matrix(fp16_act, fp32_act, large_error_mask, outcome2, node_
     plt.savefig(f"activations_images/{filepath.stem.replace('%', '_')}.png")
 
 
+def compute_sqnr(x, y):
+    # x -- original, y -- quantized
+    Ps = np.linalg.norm(x)
+    Pn = np.linalg.norm(x - y)
+    return 20 * np.log10(Ps / Pn)
+
+
 folder_path = Path("activations")
 
 thresholds = (0.1, 0.04, 0.03)
 
 
 columns = ["Node", "Shape", "Outcome 1", "Outcome 2",
+           "SQNR", "rel error 96% quantile",
            "FP16\nlarge error\nelements abs mean", "FP16\nfull abs mean",
            "FP32\nlarge error\nelements abs mean", "FP32\nfull abs mean",
            ]
 df = pd.DataFrame(columns=columns)
 
+sqnrs = []
 
 for filepath in tqdm(sorted(folder_path.glob('*'))):
     node_name = str(filepath.name).replace('%', '/')[:-13]
@@ -136,17 +145,31 @@ for filepath in tqdm(sorted(folder_path.glob('*'))):
     rel_diff_ratio = num_large_error_elements / np.prod(rel_error.shape)
     assert outcome2 == int(rel_diff_ratio > thresholds[1]), f"{node_name}, {outcome2}, {rel_diff_ratio}, {thresholds[1]}"
 
+    sqnr = compute_sqnr(fp32_act, fp16_act)
+    quantile = np.quantile(rel_error, q=1 - 0.04)
+
     df.loc[len(df)] = [node_name, str(fp32_act.shape), outcome1, outcome2,
-                       f"{fp16_large_error_mean:.5f}", f"{np.mean(np.abs(fp16_act)):.5f}",
-                       f"{fp32_large_error_mean:.5f}", f"{np.mean(np.abs(fp32_act)):.5f}",
+                       sqnr, quantile,
+                       fp16_large_error_mean, np.mean(np.abs(fp16_act)),
+                       fp32_large_error_mean, np.mean(np.abs(fp32_act)),
                        ]
+
+    sqnrs.append(sqnr)
 
     # if outcome2 == 0:
     #     continue
     # plot_distr(fp16_act, fp32_act, large_error_ind, num_large_error_elements, outcome2, node_name, filepath)
-    plot_activation_matrix(fp16_act, fp32_act, large_error_mask, outcome2, node_name, filepath)
+    # plot_activation_matrix(fp16_act, fp32_act, large_error_mask, outcome2, node_name, filepath)
+
+
 
 # print("DataFrame:")
 # print(df)
 
-df.to_csv('output.csv', index=False)
+# df.to_csv('output.csv', index=False)
+# df.to_excel("output.xlsx", index=False)
+
+
+plt.hist(sqnrs, np.linspace(min(sqnrs), max(sqnrs), 50))
+plt.grid()
+plt.show()
