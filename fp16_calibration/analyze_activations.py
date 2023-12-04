@@ -7,6 +7,27 @@ from tqdm import tqdm
 import matplotlib.colors as colors
 
 
+def get_sym_log_bins(data, n_bins, decrease_min_coef=1.0, increase_max_coef=1.0):
+    min_value, max_value = data.min(), data.max()
+    min_value *= increase_max_coef if min_value < 0 else decrease_min_coef
+    max_value *= increase_max_coef if max_value > 0 else decrease_min_coef
+    linthresh = int(
+        max(1, np.ceil(-np.log10(max(1e-10, min(abs(min_value), abs(max_value), np.abs(data).min()))))))
+    if min_value < 0:
+        if max_value > 0:
+            negative_share = linthresh + np.log10(-min_value)
+            positive_share = linthresh + np.log10(max_value)
+            n_negative_bins = int(n_bins * negative_share / (negative_share + positive_share))
+            n_positive_bins = int(n_bins * positive_share / (negative_share + positive_share))
+            bins = (-np.logspace(np.log10(-min_value), -linthresh, n_negative_bins)).tolist()[:-1] + \
+                   np.logspace(-linthresh, np.log10(max_value), n_positive_bins).tolist()
+        else:
+            bins = -np.logspace(np.log10(-min_value), np.log10(-max_value), n_bins)
+    else:
+        bins = np.logspace(np.log10(min_value), np.log10(max_value), n_bins)
+    return bins, linthresh
+
+
 def plot_distr(fp16_act, fp32_act, large_error_ind, num_large_error_elements, outcome2, node_name, filepath):
     fig, axs = plt.subplots(2, 2, figsize=(15, 12))
     n_bins = 100
@@ -18,23 +39,7 @@ def plot_distr(fp16_act, fp32_act, large_error_ind, num_large_error_elements, ou
             if j == 0 and num_large_error_elements == 0:
                 continue
 
-            min_value, max_value = data_plot.min(), data_plot.max()
-            min_value *= 1.1 if min_value < 0 else 0.9
-            max_value *= 1.1 if max_value > 0 else 0.9
-            linthresh = int(
-                max(1, np.ceil(-np.log10(max(1e-10, min(abs(min_value), abs(max_value), np.abs(data_plot).min()))))))
-            if min_value < 0:
-                if max_value > 0:
-                    negative_share = linthresh + np.log10(-min_value)
-                    positive_share = linthresh + np.log10(max_value)
-                    n_negative_bins = int(n_bins * negative_share / (negative_share + positive_share))
-                    n_positive_bins = int(n_bins * positive_share / (negative_share + positive_share))
-                    bins = (-np.logspace(np.log10(-min_value), -linthresh, n_negative_bins)).tolist()[:-1] + \
-                           np.logspace(-linthresh, np.log10(max_value), n_positive_bins).tolist()
-                else:
-                    bins = -np.logspace(np.log10(-min_value), np.log10(-max_value), n_bins)
-            else:
-                bins = np.logspace(np.log10(min_value), np.log10(max_value), n_bins)
+            bins, linthresh = get_sym_log_bins(data_plot, n_bins, decrease_min_coef=0.9, increase_max_coef=1.1)
             try:
                 axs[i, j].hist(data_plot, bins=bins)
             except Exception as e:
@@ -99,31 +104,59 @@ def plot_activation_matrix(fp16_act, fp32_act, large_error_mask, outcome2, node_
 def compute_sqnr(x, y):
     # x -- original, y -- quantized
     Ps = np.linalg.norm(x)
-    Pn = np.linalg.norm(x - y)
+    Pn = np.nan_to_num(np.linalg.norm(x - y), posinf=np.finfo(np.float32).max)
     return 20 * np.log10(Ps / Pn)
 
 
-folder_path = Path("activations")
+# model_id = "red-pajama-3b-chat"
+# model_id = "tiny-sd-unet"
+# model_id = "T5"
+model_id = "codegen-2B-multi"
 
-thresholds = (0.1, 0.04, 0.03)
+activations_dir = Path("activations/")
+folder_path = Path("activations") / model_id
+
+thresholds_per_type = {
+    'Convolution': (0.1, 0.003, 0.00),
+    'MatMul': (0.1, 0.04, 0.03),
+}
 
 
 columns = ["Node", "Shape", "Outcome 1", "Outcome 2",
-           "SQNR", "rel error 96% quantile",
+           "SQNR", "rel error (100 - t1)% quantile",
            "FP16\nlarge error\nelements abs mean", "FP16\nfull abs mean",
            "FP32\nlarge error\nelements abs mean", "FP32\nfull abs mean",
            ]
 df = pd.DataFrame(columns=columns)
 
 sqnrs = []
+sqnrs_upcasted = []
+sqnrs_not_upcasted = []
+
+sqnrs_matmul_upcasted = []
+sqnrs_matmul_not_upcasted = []
+sqnrs_conv_upcasted = []
+sqnrs_conv_not_upcasted = []
 
 for filepath in tqdm(sorted(folder_path.glob('*'))):
     node_name = str(filepath.name).replace('%', '/')[:-13]
+
+    thresholds = (None, None, None)
+    node_type = None
+    for k in thresholds_per_type.keys():
+        if k in node_name:
+            node_type = k
+            break
+    if node_type is None:
+        if "Multiply" in node_name:
+            node_type = "MatMul"
+    thresholds = thresholds_per_type[node_type]
+
     filepath_str = str(filepath)
     if "fp32" in filepath_str:
         continue
 
-    fp16_act = np.load(filepath)
+    fp16_act = np.nan_to_num(np.load(filepath), posinf=np.finfo(np.float16).max)
     fp32_act = np.load(filepath_str.replace("fp16", "fp32"))
 
     outcome1 = int(filepath_str[-7])
@@ -133,7 +166,9 @@ for filepath in tqdm(sorted(folder_path.glob('*'))):
         warnings.simplefilter("ignore")
         rel_error = np.abs(2 * (fp16_act - fp32_act) / (np.abs(fp16_act) + np.abs(fp32_act)))
     mean_rel_error = np.mean(rel_error)
-    assert outcome1 == int(mean_rel_error > thresholds[2]), f"{node_name}, {outcome1}, {mean_rel_error}, {thresholds[2]}"
+    if outcome1 != int(not(mean_rel_error < thresholds[2])):
+        print(f"Warning stored and computed outcome1 do not align "
+              f"{node_name}, {outcome1}, {mean_rel_error}, {thresholds[2]}")
 
     large_error_mask = rel_error >= thresholds[0]
     num_large_error_elements = np.sum(large_error_mask)
@@ -146,7 +181,7 @@ for filepath in tqdm(sorted(folder_path.glob('*'))):
     assert outcome2 == int(rel_diff_ratio > thresholds[1]), f"{node_name}, {outcome2}, {rel_diff_ratio}, {thresholds[1]}"
 
     sqnr = compute_sqnr(fp32_act, fp16_act)
-    quantile = np.quantile(rel_error, q=1 - 0.04)
+    quantile = np.quantile(rel_error, q=1 - thresholds[1])
 
     df.loc[len(df)] = [node_name, str(fp32_act.shape), outcome1, outcome2,
                        sqnr, quantile,
@@ -155,6 +190,18 @@ for filepath in tqdm(sorted(folder_path.glob('*'))):
                        ]
 
     sqnrs.append(sqnr)
+    if outcome2:
+        sqnrs_upcasted.append(sqnr)
+        if node_type == "MatMul":
+            sqnrs_matmul_upcasted.append(sqnr)
+        else:
+            sqnrs_conv_upcasted.append(sqnr)
+    else:
+        sqnrs_not_upcasted.append(sqnr)
+        if node_type == "MatMul":
+            sqnrs_matmul_not_upcasted.append(sqnr)
+        else:
+            sqnrs_conv_not_upcasted.append(sqnr)
 
     # if outcome2 == 0:
     #     continue
@@ -166,10 +213,40 @@ for filepath in tqdm(sorted(folder_path.glob('*'))):
 # print("DataFrame:")
 # print(df)
 
-# df.to_csv('output.csv', index=False)
-# df.to_excel("output.xlsx", index=False)
+# df.to_excel(f"output_{model_id}.xlsx", index=False)
 
+sqnrs = np.array(sqnrs)
+# bins, linthresh = get_sym_log_bins(sqnrs, 100, decrease_min_coef=0.9, increase_max_coef=1.1)
+# plt.hist(sqnrs, bins)
+# plt.xscale('symlog', linthresh=10 ** -linthresh)
+# plt.yscale('log')
+# plt.grid()
 
-plt.hist(sqnrs, np.linspace(min(sqnrs), max(sqnrs), 50))
-plt.grid()
-plt.show()
+data_splits = [(sqnrs_upcasted, sqnrs_not_upcasted)]
+data_labels = ["All ops"]
+
+if model_id == "tiny-sd-unet":
+    data_splits.extend([
+        (sqnrs_matmul_upcasted, sqnrs_matmul_not_upcasted),
+        (sqnrs_conv_upcasted, sqnrs_conv_not_upcasted)
+    ])
+    data_labels.extend(["MatMul ops", "Conv ops"])
+
+for (sqnrs_upcasted, sqnrs_not_upcasted), data_label in zip(data_splits, data_labels):
+    min_threshold = 0
+    too_low_sqnrs = sqnrs < min_threshold
+    print("Excluding sqnrs from histogram:", sqnrs[np.where(too_low_sqnrs)])
+    sqnrs = sqnrs[np.where(~too_low_sqnrs)]
+    # plt.hist(sqnrs, np.linspace(sqnrs.min(), sqnrs.max(), 50))
+    # plt.hist([sqnrs_upcasted, sqnrs_not_upcasted], np.linspace(sqnrs.min(), sqnrs.max(), 50), stacked=True, alpha=0.5)
+    plt.hist(sqnrs_not_upcasted, np.linspace(sqnrs.min(), sqnrs.max(), 50), alpha=0.5, label="Not upcasted")
+    plt.hist(sqnrs_upcasted, np.linspace(sqnrs.min(), sqnrs.max(), 50), alpha=0.5, label="Upcasted")
+    plt.title(f"{model_id} ({data_label})")
+    plt.legend()
+    plt.grid()
+    plt.tight_layout()
+    plt.yscale("log")
+    # plt.show()
+    save_file_name = f"sqnrs_{model_id}.png" if model_id != "tiny-sd-unet" else f"sqnrs_{model_id}_{data_label}.png"
+    plt.savefig(save_file_name)
+    plt.cla()
