@@ -254,8 +254,8 @@ def compare_tensors(node: Node, a: np.ndarray, b: np.ndarray, new_thresholds_per
     # from pathlib import Path
     # outcome1 = int(not(mean_rel_error < rel_tol))
     # outcome2 = int(rel_diff_ratio > rel_threshold_ratio)
-    # save_dir = Path("activations/tiny-sd-unet")
-    # save_dir.mkdir(exist_ok=True)
+    # save_dir = Path("activations/codegen-2B-multi")
+    # save_dir.mkdir(parents=True, exist_ok=True)
     # filepath_fp16 = save_dir / f"{node_name}_fp16_{outcome1}_{outcome2}.npy"
     # filepath_fp32 = save_dir / f"{node_name}_fp32_{outcome1}_{outcome2}.npy"
     # np.save(filepath_fp16, a)
