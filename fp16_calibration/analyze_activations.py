@@ -223,7 +223,7 @@ sqnrs = np.array(sqnrs)
 # plt.grid()
 
 data_splits = [(sqnrs_upcasted, sqnrs_not_upcasted)]
-data_labels = ["All ops"]
+data_lgiabels = [""]
 
 if model_id == "tiny-sd-unet":
     data_splits.extend([
