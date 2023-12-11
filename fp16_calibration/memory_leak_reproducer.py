@@ -15,22 +15,12 @@ def red_pijama_partial_text_processor(partial_text, new_text):
     return partial_text.split('<bot>:')[-1]
 
 
-def get_memory(with_children=False):
-    process = psutil.Process()
-    parent_memory = process.memory_info().rss
-    if not with_children:
-        return parent_memory >> 20
-
-    child_processes = process.children(recursive=True)
-    total_child_memory = 0
-    for child in child_processes:
-        total_child_memory += child.memory_info().rss
-
-    return (parent_memory + total_child_memory) >> 20
+def get_allocated_memory():
+    return (psutil.virtual_memory().total - psutil.virtual_memory().available) / 2**30
 
 
 model_id = "red-pajama-3b-chat"
-models_dir = Path("../")
+models_dir = Path("models")
 model_dir = models_dir / model_id / "FP16"
 model_configuration = {"model_id": "togethercomputer/RedPajama-INCITE-Chat-3B-v1", "start_message": "",
                        "history_template": "\n<human>:{user}\n<bot>:{assistant}", "stop_tokens": [29, 0],
@@ -39,8 +29,6 @@ model_configuration = {"model_id": "togethercomputer/RedPajama-INCITE-Chat-3B-v1
 
 core = ov.Core()
 device = "GPU"
-
-tok = AutoTokenizer.from_pretrained(models_dir / model_id / "RedPajama-INCITE-Chat-3B-v1", trust_remote_code=True)
 
 if not model_dir.exists():
     ov_model = OVModelForCausalLM.from_pretrained(model_configuration["model_id"], export=True, compile=False,
@@ -53,14 +41,11 @@ ov_model = OVModelForCausalLM.from_pretrained(model_dir, device=device, ov_confi
                                               config=AutoConfig.from_pretrained(model_dir, trust_remote_code=True),
                                               trust_remote_code=True)
 
-print(f"Starting. Total free memory: "
-      f"{psutil.virtual_memory().available / 2**30:.2f} / {psutil.virtual_memory().total / 2**30:.2f} GB.")
+print(f"Starting. Total allocated memory: {get_allocated_memory():.2f} GB.")
 start_time = datetime.now()
 for i in range(100):
-    core.compile_model(ov_model.model, 'GPU', config={"INFERENCE_PRECISION_HINT": "f16"})
+    core.compile_model(ov_model.model, device)
     gc.collect()
     print(f"Iter {i} time {(datetime.now() - start_time).total_seconds():.2f} sec. "
-          f"Memory used by the current process: {get_memory()} MB; {get_memory(True)} MB (with children). "
-          f"Total free memory: "
-          f"{psutil.virtual_memory().available / 2**30:.2f} / {psutil.virtual_memory().total / 2**30:.2f} GB.")
+          f"Total allocated memory: {get_allocated_memory():.2f} GB.")
     start_time = datetime.now()
