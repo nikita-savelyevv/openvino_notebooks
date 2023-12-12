@@ -94,7 +94,7 @@ def insert_results_for_tracked_ops(model, nodes_to_track: List) -> (List, List, 
         node_0 = op.input_value(0).get_node()
         node_1 = op.input_value(1).get_node()
         for node in [node_0, node_1]:
-            if node.get_type_name() != 'Constant' and not is_decompression_convert(node):  # for Consts we can take inputs from ov::Model
+            if node.get_type_name() != 'Constant' and not is_constant_path(node):  # for Consts we can take inputs from ov::Model
                 outputs.append(node.output(0))
     model.add_outputs(outputs)
 
@@ -103,7 +103,7 @@ def get_const_value_from_ovmodel(node: Union[Constant, Node]) -> np.ndarray:
     if node.get_type_name() == 'Constant':
         assert node.get_element_type() == ov.Type.f32
         return node.get_data()
-    elif is_decompression_convert(node):
+    elif is_constant_path(node):
         # if model is compressed and constant values flow through decompression convert
         const_node = node.input_value(0).get_node()
         assert const_node.get_type_name() == 'Constant'
@@ -114,10 +114,12 @@ def get_const_value_from_ovmodel(node: Union[Constant, Node]) -> np.ndarray:
             f'Cannot get const values from ov.Model for node {node.get_friendly_name()} with type {node.get_type_name()}')
 
 
-def is_decompression_convert(node: Node) -> bool:
+def is_constant_path(node: Node) -> bool:
     if node.get_type_name() != 'Convert':
         return False
     if len(node.get_rt_info()['is_decompression_0'].aslist()) > 0:
+        return True
+    if node.input_value(0).get_node().get_type_name() == 'Constant':
         return True
     return False
 
@@ -132,7 +134,7 @@ def infer_full_net(nodes_to_track: List[Node], orig_model: ov.Model, example_inp
     for key, val in results.items():
         for input_val in key.node.input_values():
             node_name = input_val.get_node().get_friendly_name()
-            if input_val.get_node().get_type_name() == 'Constant' or is_decompression_convert(input_val.get_node()):
+            if input_val.get_node().get_type_name() == 'Constant' or is_constant_path(input_val.get_node()):
                 results_map[node_name] = get_const_value_from_ovmodel(input_val.get_node())
             else:
                 results_map[node_name] = val
@@ -141,7 +143,7 @@ def infer_full_net(nodes_to_track: List[Node], orig_model: ov.Model, example_inp
     for node in nodes_to_track:
         res_item = [results_map[node.get_friendly_name()]]
         for input_val in node.input_values():
-            if input_val.get_node().get_type_name() == 'Constant' or is_decompression_convert(input_val.get_node()):
+            if input_val.get_node().get_type_name() == 'Constant' or is_constant_path(input_val.get_node()):
                 res_item.append(get_const_value_from_ovmodel(input_val.get_node()))
             else:
                 res_item.append(results_map[input_val.get_node().get_friendly_name()])
