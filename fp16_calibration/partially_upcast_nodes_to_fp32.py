@@ -1,5 +1,5 @@
 import gc
-from typing import List, Dict, Union, Tuple, Callable
+from typing import List, Dict, Union, Tuple
 
 import numpy as np
 from openvino._pyopenvino import Node
@@ -19,26 +19,14 @@ ops_to_track_map = {
 
 def rt_info_name_to_keep_orig_precision():
     return 'precise_0'
-    # return 'disable_fp16_compression_0'
-
-
-def get_thresholds_per_op():
-    return {
-        'Convolution': (0.1, 0.003, 0.00),
-        # 'MatMul': (0.1, 1e-6, 1e-6),
-        'MatMul': (0.1, 0.04, 0.03),
-    }
 
 
 def partially_upcast_nodes_to_fp32(orig_model: Model, example_input: Union[List, Dict], half_type: str,
-                                   batch_size: int = -1, thresholds_per_op: Dict[str, Tuple] = None,
-                                   upcast_ratio: float = 0.1,
-                                   verbose: bool = False) -> Model:
+                                   batch_size: int = -1, upcast_ratio: float = 0.1, verbose: bool = False) -> Model:
     assert half_type in ("f16", "bf16")
     device = "GPU" if half_type == "f16" else "CPU"
 
     nodes_to_track_names = get_nodes_to_track(orig_model)
-    # node_to_upcast_names = []
     nodes_sqnrs = []
     batch_size = len(nodes_to_track_names) if batch_size == -1 else batch_size
     for i in tqdm(range(0, len(nodes_to_track_names), batch_size), disable=not verbose):
@@ -53,9 +41,6 @@ def partially_upcast_nodes_to_fp32(orig_model: Model, example_input: Union[List,
         fp16_infer_values_batch = infer_nodes(nodes_to_track_batch, fp16_full_net_infer_values_batch, device, half_type)
         fp32_infer_values_batch = infer_nodes(nodes_to_track_batch, fp16_full_net_infer_values_batch, device, "f32")
 
-        # node_to_upcast_names_batch = get_nodes_with_errors(nodes_to_track_batch, fp16_infer_values_batch,
-        #                                                       fp32_infer_values_batch, thresholds_per_op, verbose)
-        # node_to_upcast_names.extend(node_to_upcast_names_batch)
         nodes_sqnrs.extend(get_nodes_sqnrs(nodes_to_track_batch, fp16_infer_values_batch, fp32_infer_values_batch))
 
         del fp16_full_net_infer_values_batch, fp16_infer_values_batch, fp32_infer_values_batch, model, name_to_node_map
@@ -179,15 +164,6 @@ def infer_tracked_op(op: Node, input_vals: Tuple, device: str, precision: str) -
     return result[0]
 
 
-def get_nodes_with_errors(nodes: List[Node], fp16_infer_vals: List, fp32_infer_vals: List, thresholds: None,
-                          verbose: bool = False) -> List[str]:
-    nodes_with_errors = []
-    for node, fp16_val, fp32_val in zip(nodes, fp16_infer_vals, fp32_infer_vals):
-        if compare_tensors(node, fp16_val, fp32_val, thresholds, verbose):
-            nodes_with_errors.append(node.get_friendly_name())
-    return nodes_with_errors
-
-
 def get_nodes_sqnrs(nodes: List[Node], fp16_infer_vals: List, fp32_infer_vals: List) -> List[Tuple[str, float]]:
     nodes_sqnrs = []
     for node, fp16_val, fp32_val in zip(nodes, fp16_infer_vals, fp32_infer_vals):
@@ -220,47 +196,3 @@ def compute_sqnr(x, y):
     Ps = np.linalg.norm(x)
     Pn = np.nan_to_num(np.linalg.norm(x - y), posinf=np.finfo(np.float32).max)
     return 20 * np.log10(Ps / Pn)
-
-
-def compare_tensors(node: Node, a: np.ndarray, b: np.ndarray, new_thresholds_per_op, verbose: bool = False) -> bool:
-    """
-    If values differ more than a certain metric then function returns True
-    """
-    assert np.array_equal(a.shape, b.shape), f'Shapes differ {a.shape} and {b.shape}'
-    out_size = int(np.prod(a.shape))
-    a_, b_ = np.reshape(a, out_size), np.reshape(b, out_size)
-
-    import warnings
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        rel_error = np.abs(2 * (a_ - b_) / (np.abs(a_) + abs(b_)))
-
-    mean_rel_error = np.mean(rel_error)
-    thresholds_map = get_thresholds_per_op()
-    if new_thresholds_per_op is not None:
-        thresholds_map.update(new_thresholds_per_op)
-    thresholds = thresholds_map[node.get_type_name()]
-    rel_threshold = thresholds[0]
-    rel_threshold_ratio = thresholds[1]
-    rel_tol = thresholds[2]
-
-    rel_diff_ratio = np.size(np.where(rel_error >= rel_threshold)) / out_size
-    result = False
-    if not(mean_rel_error < rel_tol) and rel_diff_ratio > rel_threshold_ratio:  # "not (...)" due to nans
-        if verbose:
-            print(f'Upcasted node {node.get_friendly_name()} with {rel_threshold:.2f} '
-                  f'rel2_diff_ratio {rel_diff_ratio:.6f} and mean_rel_error {mean_rel_error:.6f}')
-        result = True
-
-    # node_name = node.get_friendly_name().replace('/', '%')
-    # from pathlib import Path
-    # outcome1 = int(not(mean_rel_error < rel_tol))
-    # outcome2 = int(rel_diff_ratio > rel_threshold_ratio)
-    # save_dir = Path("activations/codegen-2B-multi")
-    # save_dir.mkdir(parents=True, exist_ok=True)
-    # filepath_fp16 = save_dir / f"{node_name}_fp16_{outcome1}_{outcome2}.npy"
-    # filepath_fp32 = save_dir / f"{node_name}_fp32_{outcome1}_{outcome2}.npy"
-    # np.save(filepath_fp16, a)
-    # np.save(filepath_fp32, b)
-
-    return result
