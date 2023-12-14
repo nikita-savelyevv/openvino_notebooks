@@ -111,7 +111,8 @@ def compute_sqnr(x, y):
 # model_id = "red-pajama-3b-chat"
 # model_id = "tiny-sd-unet"
 # model_id = "T5"
-model_id = "codegen-2B-multi"
+# model_id = "codegen-2B-multi"
+model_id = "gpt-neox-20b"
 
 activations_dir = Path("activations/")
 folder_path = Path("activations") / model_id
@@ -213,7 +214,7 @@ for filepath in tqdm(sorted(folder_path.glob('*'))):
 # print("DataFrame:")
 # print(df)
 
-# df.to_excel(f"output_{model_id}.xlsx", index=False)
+df.to_excel(f"output_{model_id}.xlsx", index=False)
 
 sqnrs = np.array(sqnrs)
 # bins, linthresh = get_sym_log_bins(sqnrs, 100, decrease_min_coef=0.9, increase_max_coef=1.1)
@@ -223,7 +224,7 @@ sqnrs = np.array(sqnrs)
 # plt.grid()
 
 data_splits = [(sqnrs_upcasted, sqnrs_not_upcasted)]
-data_lgiabels = [""]
+data_labels = [""]
 
 if model_id == "tiny-sd-unet":
     data_splits.extend([
