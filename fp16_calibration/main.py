@@ -1,5 +1,10 @@
 import atexit
+import pickle
+import shutil
 from threading import Thread
+
+import numpy as np
+
 from utils import SUPPORTED_MODELS
 from transformers import AutoConfig, TextIteratorStreamer
 from optimum.intel.openvino import OVModelForCausalLM
@@ -44,43 +49,123 @@ def get_inputs_for_calibration(ov_model, tok, example_string, tokenizer_kwargs=N
     return inputs
 
 
-def run_upcast():
-    model = partially_upcast_nodes_to_fp32.partially_upcast_nodes_to_fp32(
-        ov_model.model, get_inputs_for_calibration("<human>: Which lakes are near Munich?\n<bot>:"),
-        batch_size=100, verbose=True)
-
-
 if __name__ == '__main__':
-    model_id = "red-pajama-3b-chat"
-    # models_dir = Path("c:/Users/nsavelye/workspace/projects/openvino_notebooks/notebooks/254-llm-chatbot")
-    models_dir = Path("../")
-    # model_dir = models_dir / model_id / "FP16"
-    model_dir = models_dir / model_id / "INT8_compressed_weights"
-    model_configuration = SUPPORTED_MODELS[model_id]
-
-    core = ov.Core()
-    # device = "CPU"
-    device = "GPU"
-
-    tok = AutoTokenizer.from_pretrained(models_dir / model_id / "RedPajama-INCITE-Chat-3B-v1", trust_remote_code=True)
+    #
+    # Model loading
+    #
 
     ov_config = {'PERFORMANCE_HINT': 'LATENCY', 'NUM_STREAMS': '1', "CACHE_DIR": ""}
-    ov_model = OVModelForCausalLM.from_pretrained(model_dir, device=device, ov_config=ov_config,
-                                                  config=AutoConfig.from_pretrained(model_dir, trust_remote_code=True),
-                                                  trust_remote_code=True)
 
-    # prompt = "Which lakes are near Munich?"
-    # generation_kwargs = dict(
-    #     max_new_tokens=50,
-    #     temperature=0.1,
-    #     do_sample=0.1 > 0.0,
-    #     top_p=1.0,
-    #     top_k=50,
-    #     repetition_penalty=1.1
-    # )
-    # print(run_generate(ov_model, prompt, **generation_kwargs))
+    core = ov.Core()
+
+    models_dir = Path("./models")
+
+    # MODEL_ID = "red-pajama-3b-chat"
+    # MODEL_ID = "T5"
+    MODEL_ID = "tiny-sd-unet"
+    # MODEL_ID = "codegen-2B-multi"
+    # MODEL_ID = "gpt-neox-20b"
+
+    if MODEL_ID in ["red-pajama-3b-chat", "tiny-sd-unet", "T5"]:
+        half_type = "f16"
+        model_dir = models_dir / MODEL_ID / "FP16"
+        # model_dir = models_dir / MODEL_ID / "FP16_calibrated"
+        # model_dir = models_dir / MODEL_ID / "INT8_compressed_weights"
+        device = "GPU"
+        # device = "CPU"
+
+        if MODEL_ID == "red-pajama-3b-chat":
+            example_prompt = "<human>: Which lakes are near Munich?\\n<bot>:"
+        elif MODEL_ID == "T5":
+            example_prompt = "ultra close color photo portrait of rainbow owl with deer horns in the woods"
+        elif MODEL_ID == "tiny-sd-unet":
+            with open("unet_example_input.pkl", "rb") as f:
+                unet_example_input = pickle.load(f)
+        else:
+            raise Exception("Unknown model")
+    elif MODEL_ID in ["codegen-2B-multi", "gpt-neox-20b"]:
+        half_type = "bf16"
+        device = "CPU"
+        # ov_config["INFERENCE_PRECISION_HINT"] = "f32"     # otherwise BF16 is used
+        if MODEL_ID == "codegen-2B-multi":
+            model_dir = Path(
+                "/home/devuser/nsavelye/workspace/openvino.genai/llm_bench/python/codegen-2B-multi/pytorch/dldt/FP32")
+            example_prompt = "# this function implement Fourier transform for imput array X"
+        elif MODEL_ID == "gpt-neox-20b":
+            model_dir = Path(
+                "/home/devuser/nsavelye/workspace/openvino.genai/llm_bench/python/gpt-neox-20b/fp16/pytorch/dldt/FP16")
+            example_prompt = "Which lakes are near Munich?"
+        else:
+            raise Exception("Unknown model")
+    else:
+        raise Exception("Unknown model")
+
+    if MODEL_ID in ["red-pajama-3b-chat", "codegen-2B-multi", "gpt-neox-20b"]:
+        tok = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
+        ov_model_for_causal_lm = OVModelForCausalLM.from_pretrained(
+            model_dir, device=device, ov_config=ov_config,
+            config=AutoConfig.from_pretrained(model_dir, trust_remote_code=True), trust_remote_code=True)
+        model = ov_model_for_causal_lm.model
+    elif MODEL_ID == "T5":
+        model = core.read_model(model_dir / "encoder_ir.xml")
+    elif MODEL_ID == "tiny-sd-unet":
+        model = core.read_model(model_dir / "unet.xml")
+    else:
+        raise Exception("Unknown model")
+
     #
-    # for text in run_generate(ov_model, tok, prompt, model_configuration, **generation_kwargs):
-    #     print(text)
+    # Upcasting
+    #
 
-    run_upcast()
+    SAVE_MODEL = bool(0)
+
+    if MODEL_ID in ["red-pajama-3b-chat", "codegen-2B-multi", "gpt-neox-20b"]:
+        batch_size = -1
+        example_input = get_inputs_for_calibration(ov_model_for_causal_lm, tok, example_prompt)
+        if MODEL_ID in ["codegen-2B-multi", "gpt-neox-20b"]:
+            position_ids = np.cumsum(example_input["attention_mask"], axis=1) - 1
+            position_ids[example_input["attention_mask"] == 0] = 1
+            example_input["position_ids"] = position_ids
+    elif MODEL_ID == "T5":
+        batch_size = -1
+        # from diffusers import DiffusionPipeline
+        # tokenizer = DiffusionPipeline.from_pretrained("DeepFloyd/IF-I-M-v1.0").tokenizer
+        tokenizer = AutoTokenizer.from_pretrained(models_dir / MODEL_ID / "tokenizer")
+        example_input = tokenizer(example_prompt, max_length=77, padding="max_length", return_tensors="np").input_ids
+    elif MODEL_ID == "tiny-sd-unet":
+        batch_size = -1
+        example_input = unet_example_input
+    else:
+        raise Exception("Unknown model")
+
+    # shape_str = ""
+    # for k, v in example_input.items():
+    #     # np.save(f"example_input/{k}.npy", v.data)
+    #     shape_str += f"{k}{list(v.shape)},".replace(' ', '')
+    # print(shape_str)
+
+    # upcasted_model = model_upcast_utils.partially_upcast_nodes_to_fp32(model, example_input)
+    upcast_ratio = 1.0
+    upcasted_model = partially_upcast_nodes_to_fp32.partially_upcast_nodes_to_fp32(
+        model, example_input, batch_size=batch_size, verbose=True, half_type=half_type, upcast_ratio=upcast_ratio)
+
+    if SAVE_MODEL:
+        calibrated_model_dir = Path(f"{model_dir}_calibrated_{upcast_ratio:.2f}")
+        if MODEL_ID in ["red-pajama-3b-chat", "codegen-2B-multi", "gpt-neox-20b"]:
+            # shutil.copytree(model_dir, calibrated_model_dir)
+            ov.save_model(upcasted_model, calibrated_model_dir / "openvino_model.xml")
+            for filename in ["config.json", "added_tokens.json", "special_tokens_map.json", "tokenizer.json",
+                             "tokenizer_config.json", "vocab.json"]:
+                if (model_dir / filename).exists():
+                    shutil.copy(str(model_dir / filename), str(calibrated_model_dir / filename))
+        elif MODEL_ID == "T5":
+            ov.save_model(upcasted_model, calibrated_model_dir / "encoder_ir.xml", compress_to_fp16=True)
+        elif MODEL_ID == "tiny-sd-unet":
+            ov.save_model(upcasted_model, calibrated_model_dir / "unet.xml")
+        else:
+            raise Exception("Unknown model")
+
+    if MODEL_ID in ["red-pajama-3b-chat", "codegen-2B-multi", "gpt-neox-20b"]:
+        ov_model_for_causal_lm.model = upcasted_model
+        ov_model_for_causal_lm.request = None
+        ov_model_for_causal_lm.compile()
