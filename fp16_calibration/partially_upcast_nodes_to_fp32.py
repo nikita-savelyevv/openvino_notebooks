@@ -1,6 +1,6 @@
 import gc
 from dataclasses import dataclass
-from typing import List, Dict, Union, Tuple
+from typing import List, Dict, Union
 
 import numpy as np
 from openvino._pyopenvino import Node
@@ -12,95 +12,124 @@ from openvino.runtime.utils.types import get_element_type
 import openvino as ov
 from tqdm import tqdm
 
-ops_to_track_map = {
-    'Convolution': opset.convolution,
+OPERATION_TYPE_MAP = {
     'MatMul': opset.matmul,
-    # 'Softmax': opset.softmax,
-    # 'MVN': opset.mvn,
-    # 'Multiply': opset.multiply,
-    # 'Divide': opset.divide,
-    # 'Add': opset.add,
-    # 'Subtract': opset.subtract,
-    # 'Concat': opset.concat,
-    # 'Power': opset.power,
-    # 'Transpose': opset.transpose,
-    # 'Broadcast': opset.broadcast,
-    # 'ShapeOf': opset.shape_of
+    'Convolution': opset.convolution,
+    'Softmax': opset.softmax,
+    'MVN': opset.mvn,
+    'Multiply': opset.multiply,
+    'Divide': opset.divide,
+    'Add': opset.add,
+    'Subtract': opset.subtract,
+    'Concat': opset.concat,
+    'Power': opset.power,
+    'Transpose': opset.transpose,
+    'Broadcast': opset.broadcast,
+    'ShapeOf': opset.shape_of
 }
 
 
-def rt_info_name_to_keep_orig_precision():
-    return 'precise_0'
+ORIGINAL_PRECISION_RT_INFO_NAME = 'precise_0'
 
 
 @dataclass
 class TrackedNodeInfo:
+    """
+    Data associated with a node tracked for upcasting
+    """
     node: Node          # Target node to track
-    sqnr: float = None          # Final SQNR of that node
+    snr: float = None          # SNR of the target node
     input_nodes: List[Node] = None              # Input nodes of the target node
     node_output: ov.runtime.Output = None               # Output object of the target node
     input_node_outputs: Dict[Node, ov.runtime.Output] = None    # Outputs of non-const inputs of the target node
-    node_result_full_precision: np.ndarray = None               #
-    node_result_half_precision: np.ndarray = None
-    input_results_full_precision: np.ndarray = None
+    node_result_full_precision: np.ndarray = None               # Result of the node in full precision
+    node_result_half_precision: np.ndarray = None               # Result of the node in half precision
+    input_results_full_precision: np.ndarray = None             # Results of the target node inputs in full precision
 
 
 def partially_upcast_nodes_to_fp32(orig_model: Model, example_input: Union[List, Dict], half_type: str,
-                                   batch_size: int = -1, thresholds_per_op: Dict[str, Tuple] = None,
-                                   upcast_ratio: float = 0.1,
+                                   batch_size: int = -1, operation_types: List[str] = None, upcast_ratio: float = 0.1,
                                    verbose: bool = False) -> Model:
-    assert half_type in ("f16", "bf16")
+    """
+    Transform a model to upcast some nodes to be executed in full precision instead of half precision. These nodes are
+    marked with runtime info flag.
+    Nodes are selected based on Signal-to-Noise Ratio (SNR) metric: upcast_ratio fraction of tracked nodes with the
+    lowest SNR are marked for full precision execution.
+    
+    :param orig_model: Model to process
+    :param example_input: Example input for model inference
+    :param half_type: Either 'f16' or 'bf16'
+    :param batch_size: Number of nodes to process together during a single model inference. The lower the value is,
+        the less memory footprint is, but the larger is the processing time. The value of -1 is used to disable
+        batching.
+    :param operation_types: Types of operations to consider. If None, MatMuls and Convolutions are considered.
+    :param upcast_ratio: Fraction of nodes to upcast (with the lowest SNR). 0 - do not upcast anything, 1 - upcast every
+        operation of the given types.
+    :param verbose: If True, prints progress output.
+    :return: Upcasted OV model with some nodes marked for full precision execution.
+    """
+    if half_type not in ("f16", "bf16"):
+        raise ValueError(f"Half type must be either 'f16' or 'bf16'. Got {half_type}.")
+    if operation_types is None:
+        operation_types = ["MatMul", "Convolution"]
+    for op_type in operation_types:
+        if op_type not in OPERATION_TYPE_MAP:
+            raise ValueError(f"Operation type must be one of the following {OPERATION_TYPE_MAP.keys()}. "
+                             f"Got {op_type}")
+
     device = "GPU" if half_type == "f16" else "CPU"
 
-    nodes_to_track_names = get_nodes_to_track(orig_model)
-    node_names_and_sqnrs = []
-    batch_size = len(nodes_to_track_names) if batch_size == -1 else batch_size
-    for i in tqdm(range(0, len(nodes_to_track_names), batch_size), disable=not verbose):
+    nodes_to_track_names = get_nodes_to_track(orig_model, operation_types)
+    node_names_and_snrs = []
+    batch_size = len(nodes_to_track_names) if batch_size == -1 or batch_size > len(nodes_to_track_names) else batch_size
+    for i in tqdm(range(0, len(nodes_to_track_names), batch_size), desc="Processing",
+                  disable=not verbose or batch_size == len(nodes_to_track_names)):
         model = orig_model.clone()
         name_to_node_map = {op.get_friendly_name(): op for op in model.get_ops()}
         nodes_to_track_batch = [TrackedNodeInfo(name_to_node_map[node_name]) for node_name in
                                 nodes_to_track_names[i: i + batch_size]]
         # for node_info in nodes_to_track_batch:
-        #     node_names_and_sqnrs.append((node_info.node.get_friendly_name(), 100500))
+        #     node_names_and_snrs.append((node_info.node.get_friendly_name(), 100500))
         # continue
 
-        insert_results_for_tracked_ops(model, nodes_to_track_batch)
+        # Add outputs for non-constant inputs of tracked nodes
+        insert_outputs_for_tracked_ops(model, nodes_to_track_batch)
+        # Infer model to collect tracked operation results and results of their inputs in full precision
         infer_full_net(nodes_to_track_batch, model, example_input)
+        # Infer nodes in half precision one by one using full precision inputs, collect half precision results
         infer_nodes(nodes_to_track_batch, device, half_type)
 
+        # Compute operation SNR based on full precision and half precision results
         for node_info in nodes_to_track_batch:
-            sqnr = compute_sqnr(node_info.node_result_full_precision, node_info.node_result_half_precision)
-            node_names_and_sqnrs.append((node_info.node.get_friendly_name(), sqnr))
+            snr = compute_snr(node_info.node_result_full_precision, node_info.node_result_half_precision)
+            node_names_and_snrs.append((node_info.node.get_friendly_name(), snr))
 
-        del nodes_to_track_batch
         gc.collect()
 
-    node_names = [it[0] for it in node_names_and_sqnrs]
-    node_sqnrs = np.array([it[1] for it in node_names_and_sqnrs], dtype=np.float32)
-    sqnr_quantile = np.quantile(node_sqnrs, upcast_ratio)
-    node_to_upcast_names = [node_names[i] for i in np.where(node_sqnrs <= sqnr_quantile)[0]]
+    node_names = [it[0] for it in node_names_and_snrs]
+    node_snrs = np.array([it[1] for it in node_names_and_snrs], dtype=np.float32)
+    snr_quantile = np.quantile(node_snrs, upcast_ratio)
+    node_to_upcast_names = [node_names[i] for i in np.where(node_snrs <= snr_quantile)[0]]
     if verbose:
-        print(f"SQNR {upcast_ratio:.2f}-quantile equals {sqnr_quantile:.2f}. "
-              f"Upcasted {len(node_to_upcast_names)} of {len(node_names)} considered nodes:")
-        for node_name, node_sqnr in node_names_and_sqnrs:
-            print(node_name, node_sqnr)
+        print(f"Upcasting {len(node_to_upcast_names)}/{len(node_names)} nodes with SNR less than {snr_quantile:.2f}.")
+        for node_name, node_snr in node_names_and_snrs:
+            print(node_name, node_snr)
 
     new_model = orig_model.clone()
     mark_nodes_to_upcast_to_fp32(new_model, node_to_upcast_names)
     return new_model
 
 
-def get_nodes_to_track(model: Model) -> List:
+def get_nodes_to_track(model: Model, operation_types: List[str]) -> List:
     nodes_to_track = []
     for i, op in enumerate(model.get_ordered_ops()):
-        if op.get_type_name() not in ops_to_track_map.keys() or \
-                any(map(lambda input: input.get_node().get_type_name() == 'Result', op.output(0).get_target_inputs())):
-            continue
-        nodes_to_track.append(op.get_friendly_name())
+        if op.get_type_name() in operation_types and \
+                all(map(lambda input: input.get_node().get_type_name() != 'Result', op.output(0).get_target_inputs())):
+            nodes_to_track.append(op.get_friendly_name())
     return nodes_to_track
 
 
-def insert_results_for_tracked_ops(model: Model, nodes_to_track: List[TrackedNodeInfo]) -> None:
+def insert_outputs_for_tracked_ops(model: Model, nodes_to_track: List[TrackedNodeInfo]) -> None:
     outputs = []
     for node_info in nodes_to_track:
         node = node_info.node
@@ -111,6 +140,7 @@ def insert_results_for_tracked_ops(model: Model, nodes_to_track: List[TrackedNod
         for inp_value in node.input_values():
             child_node = inp_value.get_node()
             node_info.input_nodes.append(child_node)
+            # Do not add outputs for constant nodes
             if child_node.get_type_name() != 'Constant' and not is_constant_path(child_node):
                 outputs.append(child_node.output(0))
                 node_info.input_node_outputs[child_node] = outputs[-1]
@@ -122,7 +152,7 @@ def get_const_value_from_ovmodel(node: Union[Constant, Node]) -> np.ndarray:
         assert node.get_element_type() == ov.Type.f32, f"{node.get_friendly_name()}, {node.get_element_type()}"
         return node.get_data()
     elif is_constant_path(node):
-        # if model is compressed and constant values flow through decompression convert
+        # If model is compressed and constant values flow through decompression convert
         const_node = node.input_value(0).get_node()
         assert const_node.get_type_name() == 'Constant'
         assert const_node.get_element_type().is_real()
@@ -143,7 +173,13 @@ def is_constant_path(node: Node) -> bool:
 
 
 def infer_full_net(nodes_to_track: List[TrackedNodeInfo], orig_model: Model, example_inputs: List) -> None:
-    def get_node_identificator_name(node, output):
+    def get_node_identificator_name(node: Node, output: ov.runtime.Output):
+        """
+        This return a node id string for matching nodes with their results.
+        Try to use any_name of an output if possible, otherwise use friendly name. This is done this way because
+        (1) for some op types (e.g., Gather) its key in a results dict does not equal associated node's friendly name
+        (2) some outputs do not have any_name property
+        """
         try:
             id_name = output.any_name
         except RuntimeError as e:
@@ -160,11 +196,12 @@ def infer_full_net(nodes_to_track: List[TrackedNodeInfo], orig_model: Model, exa
 
     results_map = {}
     for key, val in results.items():
+        assert len(key.node.input_values()) == 1    # TODO: remove for loop if true
         for input_val in key.node.input_values():
             node = input_val.get_node()
             id_name = get_node_identificator_name(node, key)
             if node.get_type_name() == 'Constant' or is_constant_path(node):
-                pass
+                pass    # TODO: remove if condition if this is not needed
                 # results_map[id_name] = get_const_value_from_ovmodel(node)
             else:
                 assert id_name not in results_map, f"{id_name} {results_map[id_name]} {val}"
@@ -176,8 +213,10 @@ def infer_full_net(nodes_to_track: List[TrackedNodeInfo], orig_model: Model, exa
         node_info.input_results_full_precision = []
         for input_node in node_info.input_nodes:
             if input_node.get_type_name() == 'Constant' or is_constant_path(input_node):
+                # If input is constant, retrieve its value from model
                 node_info.input_results_full_precision.append(get_const_value_from_ovmodel(input_node))
             else:
+                # If input is not constant, retrieve its input from inference results
                 input_node_output = node_info.input_node_outputs[input_node]
                 input_result = results_map[get_node_identificator_name(input_node, input_node_output)]
                 node_info.input_results_full_precision.append(input_result)
@@ -198,9 +237,9 @@ def infer_tracked_op(node_info: TrackedNodeInfo, device: str, precision: str) ->
     node = node_info.node
     try:
         call_attributes = node.get_attributes()
-        if "m_pythondiv" in call_attributes:    # this for some reason is needed for divide op
+        if "m_pythondiv" in call_attributes:    # This for some reason is needed for Divide op
             del call_attributes["m_pythondiv"]
-        new_op = ops_to_track_map[node.get_type_name()](*parameters, **call_attributes)
+        new_op = OPERATION_TYPE_MAP[node.get_type_name()](*parameters, **call_attributes)
     except Exception as e:
         print("Operation inference error", node.get_friendly_name(), parameters, node.get_attributes())
         raise e
@@ -216,9 +255,9 @@ def infer_tracked_op(node_info: TrackedNodeInfo, device: str, precision: str) ->
 
 def is_model_partially_upcasted(model) -> bool:
     for node in model.get_ordered_ops():
-        if node.get_type_name() not in ops_to_track_map.keys():
+        if node.get_type_name() not in OPERATION_TYPE_MAP.keys():
             continue
-        if rt_info_name_to_keep_orig_precision() in node.get_rt_info().keys():
+        if ORIGINAL_PRECISION_RT_INFO_NAME in node.get_rt_info().keys():
             return True
     return False
 
@@ -227,13 +266,13 @@ def mark_nodes_to_upcast_to_fp32(model: ov.Model, nodes_with_errors: List[str]) 
     nodes_to_mark = set(nodes_with_errors)
     for node in model.get_ordered_ops():
         if node.get_friendly_name() in nodes_to_mark:
-            node.get_rt_info()[rt_info_name_to_keep_orig_precision()] = ''
+            node.get_rt_info()[ORIGINAL_PRECISION_RT_INFO_NAME] = ''
             nodes_to_mark.remove(node.get_friendly_name())
     assert len(nodes_to_mark) == 0, nodes_to_mark
 
 
-def compute_sqnr(x, y):
-    # x -- original, y -- quantized
+def compute_snr(x, y):
+    # x -- original value (full precision), y -- value with noise (half precision)
 
     x, y = x.astype(np.float32), y.astype(np.float32)
     max_value = np.finfo(np.float32).max
@@ -247,8 +286,8 @@ def compute_sqnr(x, y):
 
     Ps = np.linalg.norm(x)
     Pn = np.nan_to_num(np.linalg.norm(x - y), posinf=max_value)
-    sqnr = np.nan_to_num(20 * np.log10(Ps / Pn), posinf=max_value)
-    return sqnr
+    snr = np.nan_to_num(20 * np.log10(Ps / Pn), posinf=max_value)
+    return snr
 
 
 # def compare_tensors(node: Node, a: np.ndarray, b: np.ndarray, new_thresholds_per_op, verbose: bool = False) -> bool:
