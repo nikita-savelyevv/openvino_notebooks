@@ -62,9 +62,9 @@ if __name__ == '__main__':
 
     # MODEL_ID = "red-pajama-3b-chat"
     # MODEL_ID = "T5"
-    MODEL_ID = "tiny-sd-unet"
+    # MODEL_ID = "tiny-sd-unet"
     # MODEL_ID = "codegen-2B-multi"
-    # MODEL_ID = "gpt-neox-20b"
+    MODEL_ID = "gpt-neox-20b"
 
     if MODEL_ID in ["red-pajama-3b-chat", "tiny-sd-unet", "T5"]:
         half_type = "f16"
@@ -93,7 +93,7 @@ if __name__ == '__main__':
             example_prompt = "# this function implement Fourier transform for imput array X"
         elif MODEL_ID == "gpt-neox-20b":
             model_dir = Path(
-                "/home/devuser/nsavelye/workspace/openvino.genai/llm_bench/python/gpt-neox-20b/fp16/pytorch/dldt/FP16")
+                "/home/devuser/nsavelye/workspace/openvino.genai/llm_bench/python/gpt-neox-20b/fp16/pytorch/dldt/FP32")
             example_prompt = "Which lakes are near Munich?"
         else:
             raise Exception("Unknown model")

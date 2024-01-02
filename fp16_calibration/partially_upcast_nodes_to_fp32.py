@@ -1,33 +1,48 @@
 import gc
+from dataclasses import dataclass
 from typing import List, Dict, Union, Tuple, Callable
 
 import numpy as np
 from openvino._pyopenvino import Node
 from openvino.runtime import Model
 from openvino.runtime.op import Parameter, Constant
-from openvino.runtime.opset12 import matmul, convolution
+import openvino.runtime.opset12 as opset
 from openvino.runtime.utils.types import get_element_type
 
 import openvino as ov
 from tqdm import tqdm
 
 ops_to_track_map = {
-    'Convolution': convolution,
-    'MatMul': matmul
+    'Convolution': opset.convolution,
+    'MatMul': opset.matmul,
+    'Softmax': opset.softmax,
+    'MVN': opset.mvn,
+    'Multiply': opset.multiply,
+    'Divide': opset.divide,
+    'Add': opset.add,
+    'Subtract': opset.subtract,
+    'Concat': opset.concat,
+    'Power': opset.power,
+    'Transpose': opset.transpose,
+    'Broadcast': opset.broadcast,
+    'ShapeOf': opset.shape_of
 }
 
 
 def rt_info_name_to_keep_orig_precision():
     return 'precise_0'
-    # return 'disable_fp16_compression_0'
 
 
-def get_thresholds_per_op():
-    return {
-        'Convolution': (0.1, 0.003, 0.00),
-        # 'MatMul': (0.1, 1e-6, 1e-6),
-        'MatMul': (0.1, 0.04, 0.03),
-    }
+@dataclass
+class TrackedNodeInfo:
+    node: Node          # Target node to track
+    sqnr: float = None          # Final SQNR of that node
+    input_nodes: List[Node] = None              # Input nodes of the target node
+    node_output: ov.runtime.Output = None               # Output object of the target node
+    input_node_outputs: Dict[Node, ov.runtime.Output] = None    # Outputs of non-const inputs of the target node
+    node_result_full_precision: np.ndarray = None               #
+    node_result_half_precision: np.ndarray = None
+    input_results_full_precision: np.ndarray = None
 
 
 def partially_upcast_nodes_to_fp32(orig_model: Model, example_input: Union[List, Dict], half_type: str,
@@ -38,37 +53,41 @@ def partially_upcast_nodes_to_fp32(orig_model: Model, example_input: Union[List,
     device = "GPU" if half_type == "f16" else "CPU"
 
     nodes_to_track_names = get_nodes_to_track(orig_model)
-    # node_to_upcast_names = []
-    nodes_sqnrs = []
+    node_names_and_sqnrs = []
     batch_size = len(nodes_to_track_names) if batch_size == -1 else batch_size
     for i in tqdm(range(0, len(nodes_to_track_names), batch_size), disable=not verbose):
         model = orig_model.clone()
         name_to_node_map = {op.get_friendly_name(): op for op in model.get_ops()}
-        nodes_to_track_names_batch = nodes_to_track_names[i: i + batch_size]
-        nodes_to_track_batch = [name_to_node_map[node_name] for node_name in nodes_to_track_names_batch]
+        nodes_to_track_batch = [TrackedNodeInfo(name_to_node_map[node_name]) for node_name in
+                                nodes_to_track_names[i: i + batch_size]]
+        for node_info in nodes_to_track_batch:
+            node_names_and_sqnrs.append((node_info.node.get_friendly_name(), 100500))
+        continue
 
         insert_results_for_tracked_ops(model, nodes_to_track_batch)
-        fp16_full_net_infer_values_batch = infer_full_net(nodes_to_track_batch, model, example_input)
+        infer_full_net(nodes_to_track_batch, model, example_input)
+        infer_nodes(nodes_to_track_batch, device, half_type)
 
-        fp16_infer_values_batch = infer_nodes(nodes_to_track_batch, fp16_full_net_infer_values_batch, device, half_type)
-        fp32_infer_values_batch = infer_nodes(nodes_to_track_batch, fp16_full_net_infer_values_batch, device, "f32")
+        for node_info in nodes_to_track_batch:
+            try:
+                sqnr = compute_sqnr(node_info.node_result_full_precision, node_info.node_result_half_precision)
+            except Exception as e:
+                print(node_info.node.get_friendly_name())
+                raise e
+            node_names_and_sqnrs.append((node_info.node.get_friendly_name(), sqnr))
 
-        # node_to_upcast_names_batch = get_nodes_with_errors(nodes_to_track_batch, fp16_infer_values_batch,
-        #                                                       fp32_infer_values_batch, thresholds_per_op, verbose)
-        # node_to_upcast_names.extend(node_to_upcast_names_batch)
-        nodes_sqnrs.extend(get_nodes_sqnrs(nodes_to_track_batch, fp16_infer_values_batch, fp32_infer_values_batch))
-
-        del fp16_full_net_infer_values_batch, fp16_infer_values_batch, fp32_infer_values_batch, model, name_to_node_map
+        del nodes_to_track_batch
         gc.collect()
 
-    node_names = [it[0] for it in nodes_sqnrs]
-    node_sqnrs = np.array([it[1] for it in nodes_sqnrs], dtype=np.float32)
+    node_names = [it[0] for it in node_names_and_sqnrs]
+    node_sqnrs = np.array([it[1] for it in node_names_and_sqnrs], dtype=np.float32)
     sqnr_quantile = np.quantile(node_sqnrs, upcast_ratio)
     node_to_upcast_names = [node_names[i] for i in np.where(node_sqnrs <= sqnr_quantile)[0]]
     if verbose:
         print(f"SQNR {upcast_ratio:.2f}-quantile equals {sqnr_quantile:.2f}. "
               f"Upcasted {len(node_to_upcast_names)} of {len(node_names)} considered nodes:")
-        print("\n".join(node_to_upcast_names))
+        for node_name, node_sqnr in node_names_and_sqnrs:
+            print(node_name, node_sqnr)
 
     new_model = orig_model.clone()
     mark_nodes_to_upcast_to_fp32(new_model, node_to_upcast_names)
@@ -76,32 +95,45 @@ def partially_upcast_nodes_to_fp32(orig_model: Model, example_input: Union[List,
 
 
 def get_nodes_to_track(model: Model) -> List:
-    # get operations of interest
     nodes_to_track = []
     for i, op in enumerate(model.get_ordered_ops()):
-        if op.get_type_name() not in ops_to_track_map.keys() or \
-                any(map(lambda input: input.get_node().get_type_name() == 'Result', op.output(0).get_target_inputs())):
-            continue
+        # print(op.get_type_name(), op.get_friendly_name()))
+        # if op.get_type_name() not in ops_to_track_map.keys() or \
+        #         any(map(lambda input: input.get_node().get_type_name() == 'Result', op.output(0).get_target_inputs())):
+        #     continue
         nodes_to_track.append(op.get_friendly_name())
+    # nodes_to_track = ["__module.model.gpt_neox.layers.0.attention/aten::add_/Add"]
+    # nodes_to_track = ["__module.model.gpt_neox.layers.0.post_attention_layernorm/aten::layer_norm/MVN"]
+    # nodes_to_track = ["__module.model.gpt_neox.layers.0.attention/aten::add/Add_221"]
+    # nodes_to_track = ["__module.model.gpt_neox.layers.36.attention/aten::sub/Subtract"]
+    # nodes_to_track = ["__module.model.gpt_neox.layers.0.attention/aten::cat/Concat_229"]
+    # exit(0)
     return nodes_to_track
 
 
-def insert_results_for_tracked_ops(model, nodes_to_track: List) -> (List, List, List):
-    # additional outputs to track inputs and output values of operations of interest
+def insert_results_for_tracked_ops(model: Model, nodes_to_track: List[TrackedNodeInfo]) -> None:
     outputs = []
-    for i, op in enumerate(nodes_to_track):
-        outputs.append(op.output(0))
-        node_0 = op.input_value(0).get_node()
-        node_1 = op.input_value(1).get_node()
-        for node in [node_0, node_1]:
-            if node.get_type_name() != 'Constant' and not is_constant_path(node):  # for Consts we can take inputs from ov::Model
-                outputs.append(node.output(0))
+    for node_info in nodes_to_track:
+        node = node_info.node
+        outputs.append(node.output(0))
+        node_info.node_output = outputs[-1]
+        node_info.input_nodes = []
+        node_info.input_node_outputs = {}
+        for inp_value in node.input_values():
+            child_node = inp_value.get_node()
+            node_info.input_nodes.append(child_node)
+            if child_node.get_type_name() != 'Constant' and not is_constant_path(child_node):
+                outputs.append(child_node.output(0))
+                node_info.input_node_outputs[child_node] = outputs[-1]
+                # print(1, node.get_friendly_name(), child_node.get_friendly_name())
+                # print(2, node.name, child_node.name)
+                # print(3, outputs[-1].any_name)
     model.add_outputs(outputs)
 
 
 def get_const_value_from_ovmodel(node: Union[Constant, Node]) -> np.ndarray:
     if node.get_type_name() == 'Constant':
-        assert node.get_element_type() == ov.Type.f32
+        # assert node.get_element_type() == ov.Type.f32, node.get_element_type()
         return node.get_data()
     elif is_constant_path(node):
         # if model is compressed and constant values flow through decompression convert
@@ -124,7 +156,17 @@ def is_constant_path(node: Node) -> bool:
     return False
 
 
-def infer_full_net(nodes_to_track: List[Node], orig_model: ov.Model, example_inputs: List) -> List[Tuple]:
+def infer_full_net(nodes_to_track: List[TrackedNodeInfo], orig_model: Model, example_inputs: List) -> None:
+    def get_node_identificator_name(node, output):
+        try:
+            id_name = output.any_name
+        except RuntimeError as e:
+            if "Attempt to get a name for a Tensor without names" in str(e):
+                id_name = node.get_friendly_name()
+            else:
+                raise e
+        return id_name
+
     core = ov.Core()
     exec_net = core.compile_model(orig_model, "CPU", config={"INFERENCE_PRECISION_HINT": "f32"})
     request = exec_net.create_infer_request()
@@ -133,67 +175,65 @@ def infer_full_net(nodes_to_track: List[Node], orig_model: ov.Model, example_inp
     results_map = {}
     for key, val in results.items():
         for input_val in key.node.input_values():
-            node_name = input_val.get_node().get_friendly_name()
-            if input_val.get_node().get_type_name() == 'Constant' or is_constant_path(input_val.get_node()):
-                results_map[node_name] = get_const_value_from_ovmodel(input_val.get_node())
+            node = input_val.get_node()
+            id_name = get_node_identificator_name(node, key)
+            if node.get_type_name() == 'Constant' or is_constant_path(node):
+                pass
+                # results_map[id_name] = get_const_value_from_ovmodel(node)
             else:
-                results_map[node_name] = val
+                # assert id_name not in results_map, f"{id_name} {results_map[id_name]} {val}"
+                results_map[id_name] = val
 
-    node_data_values = []  # each item contains a tuple with node output values and all input values
-    for node in nodes_to_track:
-        res_item = [results_map[node.get_friendly_name()]]
-        for input_val in node.input_values():
-            if input_val.get_node().get_type_name() == 'Constant' or is_constant_path(input_val.get_node()):
-                res_item.append(get_const_value_from_ovmodel(input_val.get_node()))
+    for node_info in nodes_to_track:
+        try:
+            node_result = results_map[get_node_identificator_name(node_info.node, node_info.node_output)]
+        except Exception as e:
+            print(node_info.node.get_friendly_name())
+            raise e
+        node_info.node_result_full_precision = node_result
+        node_info.input_results_full_precision = []
+        for input_node in node_info.input_nodes:
+            if input_node.get_type_name() == 'Constant' or is_constant_path(input_node):
+                node_info.input_results_full_precision.append(get_const_value_from_ovmodel(input_node))
             else:
-                res_item.append(results_map[input_val.get_node().get_friendly_name()])
-        node_data_values.append(tuple(res_item))
+                input_node_output = node_info.input_node_outputs[input_node]
+                input_result = results_map[get_node_identificator_name(input_node, input_node_output)]
+                node_info.input_results_full_precision.append(input_result)
     del request, exec_net, results, results_map
-    return node_data_values
 
 
-def infer_nodes(nodes_to_track: List[Node], node_data_values: List[Tuple], device: str, precision: str) -> List:
-    results = []
-    for node, value in zip(nodes_to_track, node_data_values):
-        results.append(infer_tracked_op(node, value[1:], device, precision))
-    return results
+def infer_nodes(nodes_to_track: List[TrackedNodeInfo], device: str, precision: str) -> None:
+    for node_info in nodes_to_track:
+        infer_tracked_op(node_info, device, precision)
 
 
-def infer_tracked_op(op: Node, input_vals: Tuple, device: str, precision: str) -> np.ndarray:
+def infer_tracked_op(node_info: TrackedNodeInfo, device: str, precision: str) -> None:
     parameters = []
-    for input_val in input_vals:
-        parameters.append(Parameter(get_element_type(input_val.dtype), ov.PartialShape(input_val.shape)))
+    input_values = node_info.input_results_full_precision
+    for input_value in input_values:
+        parameters.append(Parameter(get_element_type(input_value.dtype), ov.PartialShape(input_value.shape)))
 
-    if op.get_type_name() not in ops_to_track_map.keys():
+    node = node_info.node
+    if node.get_type_name() not in ops_to_track_map.keys():
         # todo: implement for other ops
-        raise NotImplementedError(f"inference track for operations {op.get_type_name()} are not implemented yet")
+        raise NotImplementedError(f"Tracking for operations {node.get_type_name()} is not implemented yet")
 
-    new_op = ops_to_track_map[op.get_type_name()](*parameters, **op.get_attributes())
+    try:
+        call_attributes = node.get_attributes()
+        if "m_pythondiv" in call_attributes:    # this for some reason is needed for divide op
+            del call_attributes["m_pythondiv"]
+        new_op = ops_to_track_map[node.get_type_name()](*parameters, **call_attributes)
+    except Exception as e:
+        print(node.get_friendly_name(), parameters, node.get_attributes())
+        raise e
     ov_model = ov.Model([new_op], parameters)
 
     exec_net = ov.Core().compile_model(ov_model, device, config={"INFERENCE_PRECISION_HINT": precision})
     request = exec_net.create_infer_request()
-    result = request.infer(input_vals)
+    result = request.infer(input_values)
+    node_info.node_result_half_precision = result[0]
     assert len(result) == 1
     del request, exec_net, ov_model
-    return result[0]
-
-
-def get_nodes_with_errors(nodes: List[Node], fp16_infer_vals: List, fp32_infer_vals: List, thresholds: None,
-                          verbose: bool = False) -> List[str]:
-    nodes_with_errors = []
-    for node, fp16_val, fp32_val in zip(nodes, fp16_infer_vals, fp32_infer_vals):
-        if compare_tensors(node, fp16_val, fp32_val, thresholds, verbose):
-            nodes_with_errors.append(node.get_friendly_name())
-    return nodes_with_errors
-
-
-def get_nodes_sqnrs(nodes: List[Node], fp16_infer_vals: List, fp32_infer_vals: List) -> List[Tuple[str, float]]:
-    nodes_sqnrs = []
-    for node, fp16_val, fp32_val in zip(nodes, fp16_infer_vals, fp32_infer_vals):
-        sqnr = compute_sqnr(fp32_val, fp16_val)
-        nodes_sqnrs.append((node.get_friendly_name(), sqnr))
-    return nodes_sqnrs
 
 
 def is_model_partially_upcasted(model) -> bool:
@@ -206,61 +246,72 @@ def is_model_partially_upcasted(model) -> bool:
 
 
 def mark_nodes_to_upcast_to_fp32(model: ov.Model, nodes_with_errors: List[str]) -> None:
+    nodes_to_mark = set(nodes_with_errors)
     for node in model.get_ordered_ops():
-        if node.get_friendly_name() in nodes_with_errors:
+        if node.get_friendly_name() in nodes_to_mark:
             node.get_rt_info()[rt_info_name_to_keep_orig_precision()] = ''
+            nodes_to_mark.remove(node.get_friendly_name())
+    assert len(nodes_to_mark) == 0, nodes_to_mark
 
 
 def compute_sqnr(x, y):
     # x -- original, y -- quantized
 
-    x = np.nan_to_num(x, posinf=np.finfo(x.dtype).max)
-    y = np.nan_to_num(y, posinf=np.finfo(y.dtype).max)
+    x, y = x.astype(np.float32), y.astype(np.float32)
+    max_value = np.finfo(np.float32).max
+
+    if np.prod(x.shape) != np.prod(y.shape):
+        print('Shape mismatch. Returning max value', x.shape, y.shape)
+        return max_value
+
+    x = np.nan_to_num(x, posinf=max_value)
+    y = np.nan_to_num(y, posinf=max_value)
 
     Ps = np.linalg.norm(x)
-    Pn = np.nan_to_num(np.linalg.norm(x - y), posinf=np.finfo(np.float32).max)
-    return 20 * np.log10(Ps / Pn)
+    Pn = np.nan_to_num(np.linalg.norm(x - y), posinf=max_value)
+    sqnr = np.nan_to_num(20 * np.log10(Ps / Pn), posinf=max_value)
+    return sqnr
 
 
-def compare_tensors(node: Node, a: np.ndarray, b: np.ndarray, new_thresholds_per_op, verbose: bool = False) -> bool:
-    """
-    If values differ more than a certain metric then function returns True
-    """
-    assert np.array_equal(a.shape, b.shape), f'Shapes differ {a.shape} and {b.shape}'
-    out_size = int(np.prod(a.shape))
-    a_, b_ = np.reshape(a, out_size), np.reshape(b, out_size)
-
-    import warnings
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        rel_error = np.abs(2 * (a_ - b_) / (np.abs(a_) + abs(b_)))
-
-    mean_rel_error = np.mean(rel_error)
-    thresholds_map = get_thresholds_per_op()
-    if new_thresholds_per_op is not None:
-        thresholds_map.update(new_thresholds_per_op)
-    thresholds = thresholds_map[node.get_type_name()]
-    rel_threshold = thresholds[0]
-    rel_threshold_ratio = thresholds[1]
-    rel_tol = thresholds[2]
-
-    rel_diff_ratio = np.size(np.where(rel_error >= rel_threshold)) / out_size
-    result = False
-    if not(mean_rel_error < rel_tol) and rel_diff_ratio > rel_threshold_ratio:  # "not (...)" due to nans
-        if verbose:
-            print(f'Upcasted node {node.get_friendly_name()} with {rel_threshold:.2f} '
-                  f'rel2_diff_ratio {rel_diff_ratio:.6f} and mean_rel_error {mean_rel_error:.6f}')
-        result = True
-
-    node_name = node.get_friendly_name().replace('/', '%')
-    from pathlib import Path
-    outcome1 = int(not(mean_rel_error < rel_tol))
-    outcome2 = int(rel_diff_ratio > rel_threshold_ratio)
-    save_dir = Path("activations/gpt-neox-20b")
-    save_dir.mkdir(parents=True, exist_ok=True)
-    filepath_fp16 = save_dir / f"{node_name}_fp16_{outcome1}_{outcome2}.npy"
-    filepath_fp32 = save_dir / f"{node_name}_fp32_{outcome1}_{outcome2}.npy"
-    np.save(filepath_fp16, a)
-    np.save(filepath_fp32, b)
-
-    return result
+# def compare_tensors(node: Node, a: np.ndarray, b: np.ndarray, new_thresholds_per_op, verbose: bool = False) -> bool:
+#     """
+#     If values differ more than a certain metric then function returns True
+#     """
+#     assert np.array_equal(a.shape, b.shape), f'Shapes differ {a.shape} and {b.shape}'
+#     out_size = int(np.prod(a.shape))
+#     a_, b_ = np.reshape(a, out_size), np.reshape(b, out_size)
+#
+#     import warnings
+#     with warnings.catch_warnings():
+#         warnings.simplefilter("ignore")
+#         rel_error = np.abs(2 * (a_ - b_) / (np.abs(a_) + abs(b_)))
+#
+#     mean_rel_error = np.mean(rel_error)
+#     thresholds_map = get_thresholds_per_op()
+#     if new_thresholds_per_op is not None:
+#         thresholds_map.update(new_thresholds_per_op)
+#     thresholds = thresholds_map[node.get_type_name()]
+#     rel_threshold = thresholds[0]
+#     rel_threshold_ratio = thresholds[1]
+#     rel_tol = thresholds[2]
+#
+#     rel_diff_ratio = np.size(np.where(rel_error >= rel_threshold)) / out_size
+#     result = False
+#     if not(mean_rel_error < rel_tol) and rel_diff_ratio > rel_threshold_ratio:  # "not (...)" due to nans
+#         if verbose:
+#             print(f'Upcasted node {node.get_friendly_name()} with {rel_threshold:.2f} '
+#                   f'rel2_diff_ratio {rel_diff_ratio:.6f} and mean_rel_error {mean_rel_error:.6f}')
+#         result = True
+#
+#     node_name = node.get_friendly_name().replace('/', '%')
+#     from pathlib import Path
+#     outcome1 = int(not(mean_rel_error < rel_tol))
+#     outcome2 = int(rel_diff_ratio > rel_threshold_ratio)
+#     save_dir = Path("activations/gpt-neox-20b")
+#     save_dir.mkdir(parents=True, exist_ok=True)
+#     filepath_fp16 = save_dir / f"{node_name}_fp16_{outcome1}_{outcome2}.npy"
+#     filepath_fp32 = save_dir / f"{node_name}_fp32_{outcome1}_{outcome2}.npy"
+#     np.save(filepath_fp16, a)
+#     np.save(filepath_fp32, b)
+#
+#     return result
