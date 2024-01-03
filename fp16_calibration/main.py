@@ -140,20 +140,28 @@ if __name__ == '__main__':
 
     # shape_str = ""
     # for k, v in example_input.items():
-    #     # np.save(f"example_input/{k}.npy", v.data)
-    #     shape_str += f"{k}{list(v.shape)},".replace(' ', '')
+    #     file_path = f"ex_in/{k}.npy"
+    #     data = v if isinstance(v, np.ndarray) else v.data
+    #     np.save(file_path, data.astype(np.float32) if data.dtype == np.float16 else data)
+    #     shape_str += f"{k}:{file_path},"
+    #     # shape_str += f"{k}{list(v.shape)},".replace(' ', '')
     # print(shape_str)
+    # exit(0)
 
     # upcasted_model = model_upcast_utils.partially_upcast_nodes_to_fp32(model, example_input)
     upcast_ratio = 1.0
     upcasted_model = partially_upcast_nodes_to_fp32.partially_upcast_nodes_to_fp32(
-        model, example_input, batch_size=batch_size, verbose=True, half_type=half_type, upcast_ratio=upcast_ratio)
+        model, example_input, batch_size=batch_size, verbose=True, half_type=half_type, upcast_ratio=upcast_ratio,
+        operation_types=['MatMul', 'Convolution', 'Softmax', 'MVN', 'Multiply', 'Divide', 'Add', 'Subtract', 'Concat',
+                         'Power', 'Transpose', 'Broadcast', 'ShapeOf']
+    )
+    # upcasted_model = model
 
     if SAVE_MODEL:
         calibrated_model_dir = Path(f"{model_dir}_calibrated_{upcast_ratio:.2f}")
         if MODEL_ID in ["red-pajama-3b-chat", "codegen-2B-multi", "gpt-neox-20b"]:
             # shutil.copytree(model_dir, calibrated_model_dir)
-            ov.save_model(upcasted_model, calibrated_model_dir / "openvino_model.xml")
+            ov.save_model(upcasted_model, calibrated_model_dir / "openvino_model.xml", compress_to_fp16=False)
             for filename in ["config.json", "added_tokens.json", "special_tokens_map.json", "tokenizer.json",
                              "tokenizer_config.json", "vocab.json"]:
                 if (model_dir / filename).exists():
@@ -164,8 +172,3 @@ if __name__ == '__main__':
             ov.save_model(upcasted_model, calibrated_model_dir / "unet.xml")
         else:
             raise Exception("Unknown model")
-
-    if MODEL_ID in ["red-pajama-3b-chat", "codegen-2B-multi", "gpt-neox-20b"]:
-        ov_model_for_causal_lm.model = upcasted_model
-        ov_model_for_causal_lm.request = None
-        ov_model_for_causal_lm.compile()
