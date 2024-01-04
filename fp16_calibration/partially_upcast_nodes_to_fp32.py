@@ -47,7 +47,7 @@ class TrackedNodeInfo:
 
 
 def partially_upcast_nodes_to_fp32(orig_model: Model, example_input: Union[List, Dict], half_type: str,
-                                   batch_size: int = -1, operation_types: List[str] = None, upcast_ratio: float = 0.1,
+                                   batch_size: int = 50, operation_types: List[str] = None, upcast_ratio: float = 0.1,
                                    verbose: bool = False) -> Model:
     """
     Transform a model to upcast some nodes to be executed in full precision instead of half precision. These nodes are
@@ -85,8 +85,7 @@ def partially_upcast_nodes_to_fp32(orig_model: Model, example_input: Union[List,
     batch_size = len(nodes_to_track_names) if batch_size == -1 or batch_size > len(nodes_to_track_names) else batch_size
     if verbose:
         print("Started upcasting")
-    for i in tqdm(range(0, len(nodes_to_track_names), batch_size), desc="Processing",
-                  disable=not verbose or batch_size == len(nodes_to_track_names)):
+    for i in tqdm(range(0, len(nodes_to_track_names), batch_size), desc="Processing batches", disable=not verbose):
         if upcast_ratio == 0.0 or upcast_ratio == 1.0:
             continue
         model = orig_model.clone()
@@ -198,7 +197,7 @@ def get_const_value_from_ovmodel(node: Union[Constant, Node]) -> np.ndarray:
         const_node = node.input_value(0).get_node()
         assert const_node.get_type_name() == "Constant"
         assert const_node.get_element_type().is_real()
-        return np.array(node.input_value(0).get_node().get_data(), dtype=np.float32)
+        return node.input_value(0).get_node().get_data()    # return f16 weight
     else:
         raise Exception(
             f"Cannot get const values from ov.Model for {node.get_friendly_name()} with type {node.get_type_name()}")
@@ -218,7 +217,7 @@ def infer_full_net(nodes_to_track: List[TrackedNodeInfo], orig_model: Model, exa
     core = ov.Core()
     exec_net = core.compile_model(orig_model, "CPU", config={"INFERENCE_PRECISION_HINT": "f32"})
     request = exec_net.create_infer_request()
-    results = request.infer(example_inputs)
+    results = request.infer(example_inputs, share_inputs=True, share_outputs=True)
 
     friendly_name_to_result_map = {}
     for i, (key, val) in enumerate(results.items()):
@@ -246,9 +245,17 @@ def infer_nodes(nodes_to_track: List[TrackedNodeInfo], device: str, precision: s
 
 def infer_tracked_op(node_info: TrackedNodeInfo, device: str, precision: str) -> None:
     parameters = []
+    inputs = []
     input_values = node_info.input_values_full_precision
     for input_value in input_values:
-        parameters.append(Parameter(get_element_type(input_value.dtype), ov.PartialShape(input_value.shape)))
+        parameter = Parameter(get_element_type(input_value.dtype), ov.PartialShape(input_value.shape))
+        if input_value.dtype == np.float16:
+            # Convert f16 weight to f32
+            convert_node = opset.convert(parameter, "f32")
+            inputs.append(convert_node)
+        else:
+            inputs.append(parameter)
+        parameters.append(parameter)
 
     node = node_info.node
     try:
@@ -260,16 +267,16 @@ def infer_tracked_op(node_info: TrackedNodeInfo, device: str, precision: str) ->
             call_attributes["broadcast_spec"] = call_attributes["mode"]
             del call_attributes["mode"]
         if node.get_type_name() == 'Concat':
-            new_op = OPERATION_TYPE_MAP[node.get_type_name()](parameters, **call_attributes)
+            new_op = OPERATION_TYPE_MAP[node.get_type_name()](inputs, **call_attributes)
         else:
-            new_op = OPERATION_TYPE_MAP[node.get_type_name()](*parameters, **call_attributes)
+            new_op = OPERATION_TYPE_MAP[node.get_type_name()](*inputs, **call_attributes)
 
-        ov_model = ov.Model([new_op], parameters)
+        ov_model = ov.Model([new_op], parameters=parameters)
         exec_net = ov.Core().compile_model(ov_model, device, config={"INFERENCE_PRECISION_HINT": precision})
         request = exec_net.create_infer_request()
-        result = request.infer(input_values)
+        result = request.infer(input_values, share_inputs=True, share_outputs=True)
     except Exception as e:
-        print("Operation inference error", node.get_type_name(), node.get_friendly_name(), parameters,
+        print("Operation inference error", node.get_type_name(), node.get_friendly_name(), inputs,
               node.get_attributes())
         raise e
 

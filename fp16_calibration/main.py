@@ -2,6 +2,7 @@ import atexit
 import pickle
 import shutil
 from threading import Thread
+from pathlib import Path
 
 import numpy as np
 
@@ -13,6 +14,8 @@ import openvino as ov
 from openvino.runtime import Tensor
 from transformers import AutoTokenizer
 import partially_upcast_nodes_to_fp32
+import model_upcast_utils
+from memory_logger import MemoryLogger
 
 
 def run_generate(ov_model, tok, text, tokenizer_kwargs=None, **generation_kwargs):
@@ -61,10 +64,10 @@ if __name__ == '__main__':
 
     models_dir = Path("./models")
 
-    # MODEL_ID = "red-pajama-3b-chat"
+    MODEL_ID = "red-pajama-3b-chat"
     # MODEL_ID = "T5"
     # MODEL_ID = "tiny-sd-unet"
-    MODEL_ID = "tiny-sd-vae-encoder"
+    # MODEL_ID = "tiny-sd-vae-encoder"
     # MODEL_ID = "codegen-2B-multi"
     # MODEL_ID = "gpt-neox-20b"
 
@@ -128,14 +131,14 @@ if __name__ == '__main__':
     SAVE_MODEL = bool(1)
 
     if MODEL_ID in ["red-pajama-3b-chat", "codegen-2B-multi", "gpt-neox-20b"]:
-        batch_size = -1
+        batch_size = 50
         example_input = get_inputs_for_calibration(ov_model_for_causal_lm, tok, example_prompt)
         if MODEL_ID in ["codegen-2B-multi", "gpt-neox-20b"]:
             position_ids = np.cumsum(example_input["attention_mask"], axis=1) - 1
             position_ids[example_input["attention_mask"] == 0] = 1
             example_input["position_ids"] = position_ids
     elif MODEL_ID == "T5":
-        batch_size = -1
+        batch_size = 50
         # from diffusers import DiffusionPipeline
         # tokenizer = DiffusionPipeline.from_pretrained("DeepFloyd/IF-I-M-v1.0").tokenizer
         tokenizer = AutoTokenizer.from_pretrained(models_dir / MODEL_ID / "tokenizer")
@@ -159,16 +162,21 @@ if __name__ == '__main__':
     # print(shape_str)
     # exit(0)
 
-    for upcast_ratio in [1.0]:
+    # log_dir = Path("/home/guest/nsavelye/workspace/fp16_calibration/fp16_calibration/final_models/red-pajama-3b-chat/new_bs1")
+    for upcast_ratio in [0.10]:
+        # memory_logger = MemoryLogger(log_dir).start_logging()
         # upcasted_model = model_upcast_utils.partially_upcast_nodes_to_fp32(model, example_input)
         upcasted_model = partially_upcast_nodes_to_fp32.partially_upcast_nodes_to_fp32(
             model, example_input, batch_size=batch_size, verbose=True, half_type=half_type, upcast_ratio=upcast_ratio,
-            operation_types=["MatMul", "Convolution", "Multiply", "MVN"])
+            operation_types=["MatMul"])
+        # memory_logger.stop_logging()
 
         if SAVE_MODEL:
-            calibrated_model_dir = Path(f"{model_dir}_calibrated_{upcast_ratio:.2f}_all")
+            calibrated_model_dir = Path(f"{model_dir}_calibrated_{upcast_ratio:.2f}")
+            # calibrated_model_dir = log_dir
             if MODEL_ID in ["red-pajama-3b-chat", "codegen-2B-multi", "gpt-neox-20b"]:
-                ov.save_model(upcasted_model, calibrated_model_dir / "openvino_model.xml", compress_to_fp16=False)
+                ov.save_model(upcasted_model, calibrated_model_dir / "openvino_model.xml",
+                              compress_to_fp16=MODEL_ID == "red-pajama-3b-chat")
                 for filename in ["config.json", "added_tokens.json", "special_tokens_map.json", "tokenizer.json",
                                  "tokenizer_config.json", "vocab.json"]:
                     if (model_dir / filename).exists():
