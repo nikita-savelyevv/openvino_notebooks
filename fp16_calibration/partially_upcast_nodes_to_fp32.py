@@ -10,7 +10,7 @@ import openvino.runtime.opset12 as opset
 from openvino.runtime.utils.types import get_element_type
 
 import openvino as ov
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 OPERATION_TYPE_MAP = {
     "MatMul": opset.matmul,
@@ -36,17 +36,17 @@ class TrackedNodeInfo:
     """
     Data associated with a node tracked for upcasting
     """
-    node: Node                 # Target node to track
-    snr: float = None          # SNR of the target node
-    input_nodes: List[Node] = None              # Input nodes of the target node
-    result_node: Node = None                    # Result node of the target node
-    input_result_nodes: Dict[Node, Node] = None                # Result nodes of non-const inputs of the target node
-    node_value_full_precision: np.ndarray = None               # Result of the node in full precision
-    node_value_half_precision: np.ndarray = None               # Result of the node in half precision
-    input_values_full_precision: np.ndarray = None             # Results of the target node inputs in full precision
+    node: Node  # Target node to track
+    snr: float = None  # SNR of the target node
+    input_nodes: List[Node] = None  # Input nodes of the target node
+    result_node: Node = None  # Result node of the target node
+    input_result_nodes: Dict[Node, Node] = None  # Result nodes of non-const inputs of the target node
+    node_value_full_precision: np.ndarray = None  # Result of the node in full precision
+    node_value_half_precision: np.ndarray = None  # Result of the node in half precision
+    input_values_full_precision: np.ndarray = None  # Results of the target node inputs in full precision
 
 
-def partially_upcast_nodes_to_fp32(orig_model: Model, example_input: Union[List, Dict], half_type: str,
+def partially_upcast_nodes_to_fp32(orig_model: Model, example_input: Union[List, Dict], half_type: str = "f16",
                                    batch_size: int = 50, operation_types: List[str] = None, upcast_ratio: float = 0.1,
                                    verbose: bool = False) -> Model:
     """
@@ -54,7 +54,7 @@ def partially_upcast_nodes_to_fp32(orig_model: Model, example_input: Union[List,
     marked with runtime info flag.
     Nodes are selected based on Signal-to-Noise Ratio (SNR) metric: upcast_ratio fraction of tracked nodes with the
     lowest SNR are marked for full precision execution.
-    
+
     :param orig_model: Model to process
     :param example_input: Example input for model inference
     :param half_type: Either "f16" or "bf16"
@@ -69,6 +69,8 @@ def partially_upcast_nodes_to_fp32(orig_model: Model, example_input: Union[List,
     """
     if half_type not in ("f16", "bf16"):
         raise ValueError(f"Half type must be either 'f16' or 'bf16'. Got {half_type}.")
+    if half_type == "bf16":
+        print("Warning! Calibration currently does not provide any improvement for bf16 type.")
     if operation_types is None:
         operation_types = ["MatMul", "Convolution"]
     for op_type in operation_types:
@@ -165,7 +167,7 @@ def insert_outputs_for_tracked_ops(model: Model, nodes_to_track: List[TrackedNod
     node_to_node_info_map = defaultdict(list)
     for node_info in nodes_to_track:
         node = node_info.node
-        node_to_node_info_map[node].append((node_info, 'parent'))   # add as a parent node
+        node_to_node_info_map[node].append((node_info, 'parent'))  # add as a parent node
         if node not in node_to_output_map:
             node_to_output_map[node] = node.output(0)
         node_info.input_nodes = []
@@ -194,7 +196,7 @@ def insert_outputs_for_tracked_ops(model: Model, nodes_to_track: List[TrackedNod
 
 def get_const_value_from_ovmodel(node: Union[Constant, Node]) -> np.ndarray:
     if node.get_type_name() == "Constant":
-        assert node.get_element_type() not in [ov.Type.f16, ov.Type.bf16],\
+        assert node.get_element_type() not in [ov.Type.f16, ov.Type.bf16], \
             f"{node.get_friendly_name()}, {node.get_element_type()}"
         return node.get_data()
     elif is_constant_path(node):
@@ -202,7 +204,7 @@ def get_const_value_from_ovmodel(node: Union[Constant, Node]) -> np.ndarray:
         const_node = node.input_value(0).get_node()
         assert const_node.get_type_name() == "Constant"
         assert const_node.get_element_type().is_real()
-        return node.input_value(0).get_node().get_data()    # return f16 weight
+        return node.input_value(0).get_node().get_data()  # return f16 weight
     else:
         raise Exception(
             f"Cannot get const values from ov.Model for {node.get_friendly_name()} with type {node.get_type_name()}")

@@ -162,7 +162,7 @@ if __name__ == '__main__':
     # print(shape_str)
     # exit(0)
 
-    # log_dir = Path("/home/guest/nsavelye/workspace/fp16_calibration/fp16_calibration/final_models/red-pajama-3b-chat/new_bs1")
+    # log_dir = Path("/home/guest/nsavelye/workspace/fp16_calibration/fp16_calibration/final_models/fp32_weights/red-pajama-3b-chat/new_bs-1")
     for upcast_ratio in [0.10]:
         # memory_logger = MemoryLogger(log_dir).start_logging()
         # upcasted_model = model_upcast_utils.partially_upcast_nodes_to_fp32(model, example_input)
