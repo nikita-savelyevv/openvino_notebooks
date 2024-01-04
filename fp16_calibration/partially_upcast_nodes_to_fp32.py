@@ -81,6 +81,11 @@ def partially_upcast_nodes_to_fp32(orig_model: Model, example_input: Union[List,
     device = "GPU" if half_type == "f16" else "CPU"
 
     nodes_to_track_names = get_nodes_to_track(orig_model, operation_types)
+    if len(nodes_to_track_names) == 0:
+        if verbose:
+            print("Warning. Not found any operations of the given type(s).")
+        return orig_model.clone()
+
     node_names_and_snrs = []
     batch_size = len(nodes_to_track_names) if batch_size == -1 or batch_size > len(nodes_to_track_names) else batch_size
     if verbose:
