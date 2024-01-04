@@ -87,6 +87,8 @@ def partially_upcast_nodes_to_fp32(orig_model: Model, example_input: Union[List,
         print("Started upcasting")
     for i in tqdm(range(0, len(nodes_to_track_names), batch_size), desc="Processing",
                   disable=not verbose or batch_size == len(nodes_to_track_names)):
+        if upcast_ratio == 0.0 or upcast_ratio == 1.0:
+            continue
         model = orig_model.clone()
         name_to_node_map = {op.get_friendly_name(): op for op in model.get_ops()}
         nodes_to_track_batch = [TrackedNodeInfo(name_to_node_map[node_name]) for node_name in
@@ -119,18 +121,29 @@ def partially_upcast_nodes_to_fp32(orig_model: Model, example_input: Union[List,
 
         gc.collect()
 
-    node_names = [it[0] for it in node_names_and_snrs]
-    node_snrs = np.array([it[1] for it in node_names_and_snrs], dtype=np.float32)
-    snr_quantile = np.quantile(node_snrs, upcast_ratio)
-    node_to_upcast_names = [node_names[i] for i in np.where(node_snrs <= snr_quantile)[0]]
+    if upcast_ratio != 0.0 and upcast_ratio != 1.0:
+        node_names = [it[0] for it in node_names_and_snrs]
+        node_snrs = np.array([it[1] for it in node_names_and_snrs], dtype=np.float32)
+        snr_quantile = np.quantile(node_snrs, upcast_ratio)
+        node_to_upcast_names = [node_names[i] for i in np.where(node_snrs <= snr_quantile + 1e-6)[0]]
+
+        if verbose:
+            print(f"Upcasted {len(node_to_upcast_names)}/{len(node_names)} nodes with SNR less than "
+                  f"{snr_quantile:.2f}.")
+            for node_name, node_snr in node_names_and_snrs:
+                if node_name in node_to_upcast_names:
+                    print(node_name, node_snr)
+    elif upcast_ratio == 0.0:
+        if verbose:
+            print("Skipping algorithm because upcast ratio equals 0.0. Nothing to upcast.")
+        node_to_upcast_names = []
+    else:
+        if verbose:
+            print("Skipping algorithm because upcast ratio equals 1.0. Upcasting all nodes of the given type(s).")
+        node_to_upcast_names = nodes_to_track_names
 
     new_model = orig_model.clone()
     mark_nodes_to_upcast_to_fp32(new_model, node_to_upcast_names)
-
-    if verbose:
-        print(f"Upcasted {len(node_to_upcast_names)}/{len(node_names)} nodes with SNR less than {snr_quantile:.2f}.")
-        for node_name, node_snr in node_names_and_snrs:
-            print(node_name, node_snr)
     return new_model
 
 
@@ -250,15 +263,16 @@ def infer_tracked_op(node_info: TrackedNodeInfo, device: str, precision: str) ->
             new_op = OPERATION_TYPE_MAP[node.get_type_name()](parameters, **call_attributes)
         else:
             new_op = OPERATION_TYPE_MAP[node.get_type_name()](*parameters, **call_attributes)
+
+        ov_model = ov.Model([new_op], parameters)
+        exec_net = ov.Core().compile_model(ov_model, device, config={"INFERENCE_PRECISION_HINT": precision})
+        request = exec_net.create_infer_request()
+        result = request.infer(input_values)
     except Exception as e:
         print("Operation inference error", node.get_type_name(), node.get_friendly_name(), parameters,
               node.get_attributes())
         raise e
-    ov_model = ov.Model([new_op], parameters)
 
-    exec_net = ov.Core().compile_model(ov_model, device, config={"INFERENCE_PRECISION_HINT": precision})
-    request = exec_net.create_infer_request()
-    result = request.infer(input_values)
     node_info.node_value_half_precision = result[0]
     assert len(result) == 1
     del request, exec_net, ov_model

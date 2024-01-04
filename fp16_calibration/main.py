@@ -54,7 +54,8 @@ if __name__ == '__main__':
     # Model loading
     #
 
-    ov_config = {'PERFORMANCE_HINT': 'LATENCY', 'NUM_STREAMS': '1', "CACHE_DIR": ""}
+    # ov_config = {'PERFORMANCE_HINT': 'LATENCY', 'NUM_STREAMS': '1', "CACHE_DIR": ""}
+    ov_config = {"CACHE_DIR": ""}
 
     core = ov.Core()
 
@@ -63,10 +64,11 @@ if __name__ == '__main__':
     # MODEL_ID = "red-pajama-3b-chat"
     # MODEL_ID = "T5"
     # MODEL_ID = "tiny-sd-unet"
+    MODEL_ID = "tiny-sd-vae-encoder"
     # MODEL_ID = "codegen-2B-multi"
-    MODEL_ID = "gpt-neox-20b"
+    # MODEL_ID = "gpt-neox-20b"
 
-    if MODEL_ID in ["red-pajama-3b-chat", "tiny-sd-unet", "T5"]:
+    if MODEL_ID in ["red-pajama-3b-chat", "tiny-sd-unet", "tiny-sd-vae-encoder", "T5"]:
         half_type = "f16"
         model_dir = models_dir / MODEL_ID / "FP16"
         # model_dir = models_dir / MODEL_ID / "FP16_calibrated"
@@ -81,6 +83,10 @@ if __name__ == '__main__':
         elif MODEL_ID == "tiny-sd-unet":
             with open("unet_example_input.pkl", "rb") as f:
                 unet_example_input = pickle.load(f)
+        elif MODEL_ID == "tiny-sd-vae-encoder":
+            model_dir = models_dir / MODEL_ID / "model"
+            with open("vae_encoder_example_input.npy", "rb") as f:
+                vae_encoder_example_input = np.load(f)
         else:
             raise Exception("Unknown model")
     elif MODEL_ID in ["codegen-2B-multi", "gpt-neox-20b"]:
@@ -110,6 +116,8 @@ if __name__ == '__main__':
         model = core.read_model(model_dir / "encoder_ir.xml")
     elif MODEL_ID == "tiny-sd-unet":
         model = core.read_model(model_dir / "unet.xml")
+    elif MODEL_ID == "tiny-sd-vae-encoder":
+        model = core.read_model(model_dir / "vae_encoder.xml")
     else:
         raise Exception("Unknown model")
 
@@ -117,7 +125,7 @@ if __name__ == '__main__':
     # Upcasting
     #
 
-    SAVE_MODEL = bool(0)
+    SAVE_MODEL = bool(1)
 
     if MODEL_ID in ["red-pajama-3b-chat", "codegen-2B-multi", "gpt-neox-20b"]:
         batch_size = -1
@@ -135,6 +143,9 @@ if __name__ == '__main__':
     elif MODEL_ID == "tiny-sd-unet":
         batch_size = -1
         example_input = unet_example_input
+    elif MODEL_ID == "tiny-sd-vae-encoder":
+        batch_size = -1
+        example_input = vae_encoder_example_input
     else:
         raise Exception("Unknown model")
 
@@ -148,27 +159,25 @@ if __name__ == '__main__':
     # print(shape_str)
     # exit(0)
 
-    # upcasted_model = model_upcast_utils.partially_upcast_nodes_to_fp32(model, example_input)
-    upcast_ratio = 1.0
-    upcasted_model = partially_upcast_nodes_to_fp32.partially_upcast_nodes_to_fp32(
-        model, example_input, batch_size=batch_size, verbose=True, half_type=half_type, upcast_ratio=upcast_ratio,
-        operation_types=['MatMul', 'Convolution', 'Softmax', 'MVN', 'Multiply', 'Divide', 'Add', 'Subtract', 'Concat',
-                         'Power', 'Transpose', 'Broadcast', 'ShapeOf']
-    )
-    # upcasted_model = model
+    for upcast_ratio in [1.0]:
+        # upcasted_model = model_upcast_utils.partially_upcast_nodes_to_fp32(model, example_input)
+        upcasted_model = partially_upcast_nodes_to_fp32.partially_upcast_nodes_to_fp32(
+            model, example_input, batch_size=batch_size, verbose=True, half_type=half_type, upcast_ratio=upcast_ratio,
+            operation_types=["MatMul", "Convolution", "Multiply", "MVN"])
 
-    if SAVE_MODEL:
-        calibrated_model_dir = Path(f"{model_dir}_calibrated_{upcast_ratio:.2f}")
-        if MODEL_ID in ["red-pajama-3b-chat", "codegen-2B-multi", "gpt-neox-20b"]:
-            # shutil.copytree(model_dir, calibrated_model_dir)
-            ov.save_model(upcasted_model, calibrated_model_dir / "openvino_model.xml", compress_to_fp16=False)
-            for filename in ["config.json", "added_tokens.json", "special_tokens_map.json", "tokenizer.json",
-                             "tokenizer_config.json", "vocab.json"]:
-                if (model_dir / filename).exists():
-                    shutil.copy(str(model_dir / filename), str(calibrated_model_dir / filename))
-        elif MODEL_ID == "T5":
-            ov.save_model(upcasted_model, calibrated_model_dir / "encoder_ir.xml", compress_to_fp16=True)
-        elif MODEL_ID == "tiny-sd-unet":
-            ov.save_model(upcasted_model, calibrated_model_dir / "unet.xml")
-        else:
-            raise Exception("Unknown model")
+        if SAVE_MODEL:
+            calibrated_model_dir = Path(f"{model_dir}_calibrated_{upcast_ratio:.2f}_all")
+            if MODEL_ID in ["red-pajama-3b-chat", "codegen-2B-multi", "gpt-neox-20b"]:
+                ov.save_model(upcasted_model, calibrated_model_dir / "openvino_model.xml", compress_to_fp16=False)
+                for filename in ["config.json", "added_tokens.json", "special_tokens_map.json", "tokenizer.json",
+                                 "tokenizer_config.json", "vocab.json"]:
+                    if (model_dir / filename).exists():
+                        shutil.copy(str(model_dir / filename), str(calibrated_model_dir / filename))
+            elif MODEL_ID == "T5":
+                ov.save_model(upcasted_model, calibrated_model_dir / "encoder_ir.xml", compress_to_fp16=True)
+            elif MODEL_ID == "tiny-sd-unet":
+                ov.save_model(upcasted_model, calibrated_model_dir / "unet.xml")
+            elif MODEL_ID == "tiny-sd-vae-encoder":
+                ov.save_model(upcasted_model, calibrated_model_dir / "vae_encoder.xml")
+            else:
+                raise Exception("Unknown model")
