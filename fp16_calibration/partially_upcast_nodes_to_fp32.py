@@ -1,4 +1,3 @@
-import gc
 from collections import defaultdict, OrderedDict
 from dataclasses import dataclass
 from typing import List, Dict, Union
@@ -54,6 +53,9 @@ def partially_upcast_nodes_to_fp32(orig_model: Model, example_input: Union[List,
     marked with runtime info flag.
     Nodes are selected based on Signal-to-Noise Ratio (SNR) metric: upcast_ratio fraction of tracked nodes with the
     lowest SNR are marked for full precision execution.
+
+    Note: Input model should have fp16 weights (i.e. saved with compress_to_fp16=True) in order to conserve
+    calibration memory.
 
     :param orig_model: Model to process
     :param example_input: Example input for model inference
@@ -124,8 +126,6 @@ def partially_upcast_nodes_to_fp32(orig_model: Model, example_input: Union[List,
                 else:
                     raise e
             node_names_and_snrs.append((node_info.node.get_friendly_name(), snr))
-
-        gc.collect()
 
     if upcast_ratio != 0.0 and upcast_ratio != 1.0:
         node_names = [it[0] for it in node_names_and_snrs]
@@ -203,7 +203,7 @@ def get_const_value_from_ovmodel(node: Union[Constant, Node]) -> np.ndarray:
         # If model is compressed and constant values flow through decompression convert
         const_node = node.input_value(0).get_node()
         assert const_node.get_type_name() == "Constant"
-        assert const_node.get_element_type().is_real()
+        assert const_node.get_element_type().is_real(), const_node.get_element_type()
         return node.input_value(0).get_node().get_data()  # return f16 weight
     else:
         raise Exception(
@@ -242,7 +242,6 @@ def infer_full_net(nodes_to_track: List[TrackedNodeInfo], orig_model: Model, exa
                 # If input is not constant, retrieve its input from inference results
                 input_value = friendly_name_to_result_map[node_info.input_result_nodes[input_node].get_friendly_name()]
             node_info.input_values_full_precision.append(input_value)
-    del request, exec_net, results, friendly_name_to_result_map
 
 
 def infer_nodes(nodes_to_track: List[TrackedNodeInfo], device: str, precision: str) -> None:
@@ -289,7 +288,6 @@ def infer_tracked_op(node_info: TrackedNodeInfo, device: str, precision: str) ->
 
     node_info.node_value_half_precision = result[0]
     assert len(result) == 1
-    del request, exec_net, ov_model
 
 
 def is_model_partially_upcasted(model) -> bool:
@@ -331,47 +329,3 @@ def compute_snr(x, y):
     snr = np.nan_to_num(20 * np.log10(Ps / Pn), posinf=max_value)
 
     return snr
-
-
-# def compare_tensors(node: Node, a: np.ndarray, b: np.ndarray, new_thresholds_per_op, verbose: bool = False) -> bool:
-#     """
-#     If values differ more than a certain metric then function returns True
-#     """
-#     assert np.array_equal(a.shape, b.shape), f"Shapes differ {a.shape} and {b.shape}"
-#     out_size = int(np.prod(a.shape))
-#     a_, b_ = np.reshape(a, out_size), np.reshape(b, out_size)
-#
-#     import warnings
-#     with warnings.catch_warnings():
-#         warnings.simplefilter("ignore")
-#         rel_error = np.abs(2 * (a_ - b_) / (np.abs(a_) + abs(b_)))
-#
-#     mean_rel_error = np.mean(rel_error)
-#     thresholds_map = get_thresholds_per_op()
-#     if new_thresholds_per_op is not None:
-#         thresholds_map.update(new_thresholds_per_op)
-#     thresholds = thresholds_map[node.get_type_name()]
-#     rel_threshold = thresholds[0]
-#     rel_threshold_ratio = thresholds[1]
-#     rel_tol = thresholds[2]
-#
-#     rel_diff_ratio = np.size(np.where(rel_error >= rel_threshold)) / out_size
-#     result = False
-#     if not(mean_rel_error < rel_tol) and rel_diff_ratio > rel_threshold_ratio:  # "not (...)" due to nans
-#         if verbose:
-#             print(f"Upcasted node {node.get_friendly_name()} with {rel_threshold:.2f} "
-#                   f"rel2_diff_ratio {rel_diff_ratio:.6f} and mean_rel_error {mean_rel_error:.6f}")
-#         result = True
-#
-#     node_name = node.get_friendly_name().replace("/", "%")
-#     from pathlib import Path
-#     outcome1 = int(not(mean_rel_error < rel_tol))
-#     outcome2 = int(rel_diff_ratio > rel_threshold_ratio)
-#     save_dir = Path("activations/gpt-neox-20b")
-#     save_dir.mkdir(parents=True, exist_ok=True)
-#     filepath_fp16 = save_dir / f"{node_name}_fp16_{outcome1}_{outcome2}.npy"
-#     filepath_fp32 = save_dir / f"{node_name}_fp32_{outcome1}_{outcome2}.npy"
-#     np.save(filepath_fp16, a)
-#     np.save(filepath_fp32, b)
-#
-#     return result
