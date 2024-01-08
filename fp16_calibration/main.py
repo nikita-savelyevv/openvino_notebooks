@@ -14,6 +14,7 @@ import openvino as ov
 from openvino.runtime import Tensor
 from transformers import AutoTokenizer
 import partially_upcast_nodes_to_fp32
+from partially_upcast_nodes_to_fp32 import OPERATION_TYPE_MAP
 import model_upcast_utils
 from memory_logger import MemoryLogger
 
@@ -64,14 +65,15 @@ if __name__ == '__main__':
 
     models_dir = Path("./models")
 
-    MODEL_ID = "red-pajama-3b-chat"
+    # MODEL_ID = "red-pajama-3b-chat"
     # MODEL_ID = "T5"
     # MODEL_ID = "tiny-sd-unet"
     # MODEL_ID = "tiny-sd-vae-encoder"
     # MODEL_ID = "codegen-2B-multi"
     # MODEL_ID = "gpt-neox-20b"
+    MODEL_ID = "densenet121"
 
-    if MODEL_ID in ["red-pajama-3b-chat", "tiny-sd-unet", "tiny-sd-vae-encoder", "T5"]:
+    if MODEL_ID in ["red-pajama-3b-chat", "tiny-sd-unet", "tiny-sd-vae-encoder", "T5", "densenet121"]:
         half_type = "f16"
         model_dir = models_dir / MODEL_ID / "FP16"
         # model_dir = models_dir / MODEL_ID / "FP16_calibrated"
@@ -90,6 +92,9 @@ if __name__ == '__main__':
             model_dir = models_dir / MODEL_ID / "model"
             with open("vae_encoder_example_input.npy", "rb") as f:
                 vae_encoder_example_input = np.load(f)
+        elif MODEL_ID == "densenet121":
+            model_dir = models_dir / MODEL_ID / "nncf"
+            # model_dir = models_dir / MODEL_ID / "pot"
         else:
             raise Exception("Unknown model")
     elif MODEL_ID in ["codegen-2B-multi", "gpt-neox-20b"]:
@@ -121,6 +126,8 @@ if __name__ == '__main__':
         model = core.read_model(model_dir / "unet.xml")
     elif MODEL_ID == "tiny-sd-vae-encoder":
         model = core.read_model(model_dir / "vae_encoder.xml")
+    elif MODEL_ID == "densenet121":
+        model = core.read_model(model_dir / "densenet121.xml")
     else:
         raise Exception("Unknown model")
 
@@ -128,8 +135,9 @@ if __name__ == '__main__':
     # Upcasting
     #
 
-    SAVE_MODEL = bool(1)
+    SAVE_MODEL = bool(0)
 
+    batch_size = -1
     if MODEL_ID in ["red-pajama-3b-chat", "codegen-2B-multi", "gpt-neox-20b"]:
         batch_size = 50
         example_input = get_inputs_for_calibration(ov_model_for_causal_lm, tok, example_prompt)
@@ -144,11 +152,14 @@ if __name__ == '__main__':
         tokenizer = AutoTokenizer.from_pretrained(models_dir / MODEL_ID / "tokenizer")
         example_input = tokenizer(example_prompt, max_length=77, padding="max_length", return_tensors="np").input_ids
     elif MODEL_ID == "tiny-sd-unet":
-        batch_size = -1
         example_input = unet_example_input
     elif MODEL_ID == "tiny-sd-vae-encoder":
-        batch_size = -1
         example_input = vae_encoder_example_input
+    elif MODEL_ID == "densenet121":
+        from PIL import Image
+        example_input = Image.open("coco_bike.jpg").resize((128, 128))
+        example_input = np.array(example_input, dtype=np.float32)
+        example_input = np.transpose(example_input, (2, 0, 1))[None]
     else:
         raise Exception("Unknown model")
 
@@ -169,6 +180,7 @@ if __name__ == '__main__':
         upcasted_model = partially_upcast_nodes_to_fp32.partially_upcast_nodes_to_fp32(
             model, example_input, batch_size=batch_size, verbose=True, half_type=half_type, upcast_ratio=upcast_ratio,
             operation_types=["MatMul"])
+            # operation_types=list(OPERATION_TYPE_MAP.keys()))
         # memory_logger.stop_logging()
 
         if SAVE_MODEL:
