@@ -65,13 +65,13 @@ if __name__ == '__main__':
 
     models_dir = Path("./models")
 
-    # MODEL_ID = "red-pajama-3b-chat"
+    MODEL_ID = "red-pajama-3b-chat"
     # MODEL_ID = "T5"
     # MODEL_ID = "tiny-sd-unet"
     # MODEL_ID = "tiny-sd-vae-encoder"
     # MODEL_ID = "codegen-2B-multi"
     # MODEL_ID = "gpt-neox-20b"
-    MODEL_ID = "densenet121"
+    # MODEL_ID = "densenet121"
 
     if MODEL_ID in ["red-pajama-3b-chat", "tiny-sd-unet", "tiny-sd-vae-encoder", "T5", "densenet121"]:
         half_type = "f16"
@@ -135,7 +135,7 @@ if __name__ == '__main__':
     # Upcasting
     #
 
-    SAVE_MODEL = bool(0)
+    SAVE_MODEL = bool(1)
 
     batch_size = -1
     if MODEL_ID in ["red-pajama-3b-chat", "codegen-2B-multi", "gpt-neox-20b"]:
@@ -173,7 +173,7 @@ if __name__ == '__main__':
     # print(shape_str)
     # exit(0)
 
-    # log_dir = Path("/home/guest/nsavelye/workspace/fp16_calibration/fp16_calibration/final_models/fp32_weights/red-pajama-3b-chat/new_bs-1")
+    # log_dir = Path("/home/guest/nsavelye/workspace/fp16_calibration/fp16_calibration/final_models/fp16_weights/red-pajama-3b-chat/new_bs50_att2")
     for upcast_ratio in [0.10]:
         # memory_logger = MemoryLogger(log_dir).start_logging()
         # upcasted_model = model_upcast_utils.partially_upcast_nodes_to_fp32(model, example_input)
