@@ -115,12 +115,13 @@ def prepare_dataset(opt_init_steps):
     return calibration_data
 
 
-def quantize(calibration_data, ov_model):
+def quantize(calibration_data, ov_model, sq_alpha=0.60):
     quantized_model = nncf.quantize(
         model=ov_model,
         calibration_dataset=nncf.Dataset(calibration_data),
         model_type=nncf.ModelType.TRANSFORMER,
-        subset_size=len(calibration_data)
+        subset_size=len(calibration_data),
+        advanced_parameters=nncf.AdvancedQuantizationParameters(smooth_quant_alpha=sq_alpha)
     )
     return quantized_model
 
@@ -202,3 +203,26 @@ for i, calibration_dataset_size in enumerate(
     save_dir.mkdir(exist_ok=True, parents=True)
     with open(save_dir / f"metrics_{start_time}.json".replace(':', '%'), "w") as f:
         json.dump(metrics_per_size, f, indent=4)
+
+
+# save_dir = Path("metrics_sq") / f"test_{test_dataset_size}"
+# metrics_per_size = []
+# start_time = datetime.datetime.now().strftime("%Y-%m-%d %H-%M-%S")
+# for i, sq_alpha in enumerate(
+#     [0.55, 0.6]
+# ):
+#     quantized_model = quantize(calibration_data, ov_model, sq_alpha=sq_alpha)
+#     top1, top5 = validate(core.compile_model(quantized_model), test_dataset_size)
+#
+#     metrics_dict = {
+#         "sq_alpha": sq_alpha,
+#         "top1_int8": top1,
+#         "top5_int8": top5
+#     }
+#
+#     print(f"\nAlpha: {sq_alpha}. Metrics: {metrics_dict}\n")
+#     metrics_per_size.append(metrics_dict)
+#
+#     save_dir.mkdir(exist_ok=True, parents=True)
+#     with open(save_dir / f"metrics_{start_time}.json".replace(':', '%'), "w") as f:
+#         json.dump(metrics_per_size, f, indent=4)
