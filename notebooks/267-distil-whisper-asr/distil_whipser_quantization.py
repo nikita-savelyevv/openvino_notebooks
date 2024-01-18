@@ -2,7 +2,9 @@ import shutil
 from contextlib import contextmanager
 from datetime import datetime
 from itertools import islice
-from typing import Any
+from typing import Any, List
+import json
+import tempfile
 
 import numpy as np
 import openvino as ov
@@ -21,24 +23,13 @@ core = ov.Core()
 
 device = "CPU"
 
-model_id = "distil-whisper/distil-large-v2"
+# model_size_id = "large-v2"
+model_size_id = "small.en"
+model_id = f"distil-whisper/distil-{model_size_id}"
 model_dir = Path(model_id.split("/")[-1])
 quantized_model_dir = model_dir / "quantized"
 
 processor = AutoProcessor.from_pretrained(model_id)
-
-
-COLLECT_CALIBRATION_DATA = False
-
-
-@contextmanager
-def calibration_data_collection():
-    global COLLECT_CALIBRATION_DATA
-    try:
-        COLLECT_CALIBRATION_DATA = True
-        yield
-    finally:
-        COLLECT_CALIBRATION_DATA = False
 
 
 def convert_to_ov():
@@ -47,11 +38,10 @@ def convert_to_ov():
             model_id, export=True, compile=False
         )
         ov_model.half()
+        # ov_model.generation_config = pt_distil_model.generation_config
         ov_model.save_pretrained(model_dir)
     else:
-        ov_model = OVModelForSpeechSeq2Seq.from_pretrained(
-            model_dir, compile=False
-        )
+        ov_model = OVModelForSpeechSeq2Seq.from_pretrained(model_dir, compile=False)
     return ov_model
 
 
@@ -61,31 +51,27 @@ class InferRequestWrapper:
         self.data_cache = data_cache
 
     def __call__(self, *args, **kwargs):
-        if COLLECT_CALIBRATION_DATA:
-            # self.data_cache.append(args[0])
-            self.data_cache.append(*args)
-        return self.request(*args, *kwargs)
+        self.data_cache.append(*args)
+        return self.request(*args, **kwargs)
 
-    def infer(self, inputs: Any = None, shared_memory: bool = False):
-        if COLLECT_CALIBRATION_DATA:
-            self.data_cache.append(inputs)
-        return self.request.infer(inputs, shared_memory)
+    def infer(self, inputs: Any = None, share_inputs: bool = False):
+        self.data_cache.append(inputs)
+        return self.request.infer(inputs, share_inputs)
+
+    def start_async(
+            self,
+            inputs: Any = None,
+            userdata: Any = None,
+            share_inputs: bool = False,
+    ):
+        self.data_cache.append(inputs)
+        self.request.infer(inputs, share_inputs)
 
     def wait(self):
         pass
 
     def get_tensor(self, name: str):
         return Tensor(self.request.results[name])
-
-    def start_async(
-            self,
-            inputs: Any = None,
-            userdata: Any = None,
-            shared_memory: bool = False,
-    ):
-        if COLLECT_CALIBRATION_DATA:
-            self.data_cache.append(inputs)
-        self.request.infer(inputs, shared_memory)
 
     def __getattr__(self, attr):
         if attr in self.__dict__:
@@ -94,12 +80,35 @@ class InferRequestWrapper:
 
 
 def extract_input_features(sample):
+    audio_array = sample["audio"]["array"]
+    audio_array = resample(audio_array, sample["audio"]["sampling_rate"], 16000)
     input_features = processor(
-        sample["audio"]["array"],
-        sampling_rate=sample["audio"]["sampling_rate"],
+        audio_array,
+        sampling_rate=16000,
         return_tensors="pt",
     ).input_features
     return input_features
+
+
+def resample(audio, src_sample_rate, dst_sample_rate):
+    """
+    Resample audio to specific sample rate
+
+    Parameters:
+      audio: input audio signal
+      src_sample_rate: source audio sample rate
+      dst_sample_rate: destination audio sample rate
+    Returns:
+      resampled_audio: input audio signal resampled with dst_sample_rate
+    """
+    if src_sample_rate == dst_sample_rate:
+        return audio
+    duration = audio.shape[0] / src_sample_rate
+    resampled_data = np.zeros(shape=(int(duration * dst_sample_rate)), dtype=np.float32)
+    x_old = np.linspace(0, duration, audio.shape[0], dtype=np.float32)
+    x_new = np.linspace(0, duration, resampled_data.shape[0], dtype=np.float32)
+    resampled_audio = np.interp(x_new, x_old, audio)
+    return resampled_audio.astype(np.float32)
 
 
 def time_it(obj, fn_name, time_list):
@@ -116,30 +125,36 @@ def time_it(obj, fn_name, time_list):
 
 
 def collect_calibration_dataset(ov_model, calibration_dataset_size):
+    # Overwrite model request properties, saving the original ones for restoring later
+    original_encoder_request = ov_model.encoder.request
+    original_decoder_with_past_request = ov_model.decoder_with_past.request
     encoder_calibration_data = []
     decoder_calibration_data = []
-    ov_model.encoder.request = InferRequestWrapper(ov_model.encoder.request, encoder_calibration_data)
-    ov_model.decoder_with_past.request = InferRequestWrapper(ov_model.decoder_with_past.request,
+    ov_model.encoder.request = InferRequestWrapper(original_encoder_request, encoder_calibration_data)
+    ov_model.decoder_with_past.request = InferRequestWrapper(original_decoder_with_past_request,
                                                              decoder_calibration_data)
 
-    dataset = load_dataset("hf-internal-testing/librispeech_asr_dummy", "clean", split="validation")
-    for sample in tqdm(islice(dataset, calibration_dataset_size), desc="Collecting calibration data",
+    # calibration_dataset = load_dataset("hf-internal-testing/librispeech_asr_dummy", "clean", split="validation")
+    calibration_dataset = load_dataset("librispeech_asr", "clean", split="validation").shuffle(seed=42)
+    for sample in tqdm(islice(calibration_dataset, calibration_dataset_size), desc="Collecting calibration data",
                        total=calibration_dataset_size):
         input_features = extract_input_features(sample)
+        ov_model.generate(input_features)
 
-        with calibration_data_collection():
-            ov_model.generate(input_features)
+    ov_model.encoder.request = original_encoder_request
+    ov_model.decoder_with_past.request = original_decoder_with_past_request
 
     return encoder_calibration_data, decoder_calibration_data
 
 
-def quantize(ov_model, calibration_dataset_size, encoder_sq_alpha, decoder_sq_alpha):
+def quantize(ov_model, calibration_dataset_size, encoder_sq_alpha, decoder_sq_alpha, cleanup_model=False):
     # encoder_calibration_data, decoder_calibration_data = collect_calibration_dataset(ov_model,
     #                                                                                  calibration_dataset_size)
     # print(len(encoder_calibration_data), len(decoder_calibration_data))
 
-    save_dir_name = f"subset{calibration_dataset_size}_enc-sq-{encoder_sq_alpha:.2f}_dec-sq-{decoder_sq_alpha:.2f}_tmp"
-    save_dir = quantized_model_dir / save_dir_name
+    # save_dir_name = f"subset{calibration_dataset_size}_enc-sq-{encoder_sq_alpha:.2f}_dec-sq-{decoder_sq_alpha:.2f}"
+    # save_dir = quantized_model_dir / save_dir_name
+    save_dir = Path(tempfile.TemporaryDirectory().name)
     if not save_dir.exists():
         encoder_calibration_data, decoder_calibration_data = collect_calibration_dataset(ov_model,
                                                                                          calibration_dataset_size)
@@ -174,6 +189,10 @@ def quantize(ov_model, calibration_dataset_size, encoder_sq_alpha, decoder_sq_al
     quantized_ov_model = OVModelForSpeechSeq2Seq.from_pretrained(save_dir, compile=False)
     quantized_ov_model.to(device)
     quantized_ov_model.compile()
+
+    if cleanup_model:
+        shutil.rmtree(str(save_dir))
+
     return quantized_ov_model
 
 
@@ -212,14 +231,11 @@ def predict(ov_model, n_samples, print_predictions):
           f"Count: {len(decoder_with_past_infer_times)} calls")
 
 
-def validate(ov_model, test_dataset_size=100):
-    dataset = load_dataset("librispeech_asr", "clean", split="test", streaming=True)
-    dataset = dataset.shuffle(seed=42).take(test_dataset_size)
-
+def validate(ov_model, test_samples):
     ground_truths = []
     predictions = []
     inference_time = []
-    for data_item in tqdm(dataset, desc="Measuring performance and accuracy", total=test_dataset_size):
+    for data_item in tqdm(test_samples, desc="Measuring performance and accuracy"):
         input_features = extract_input_features(data_item)
 
         start_time = datetime.now()
@@ -228,10 +244,10 @@ def validate(ov_model, test_dataset_size=100):
         transcription = processor.batch_decode(predicted_ids, skip_special_tokens=True)
         delta_time = (end_time - start_time).total_seconds()
 
-        print()
-        print(data_item["text"])
-        print(transcription[0])
-        ground_truths.append(data_item["text"])
+        # print()
+        # print(data_item["text"])
+        # print(transcription[0])
+        ground_truths.append(data_item.get("text", data_item["sentence"]))
         predictions.append(transcription[0])
         inference_time.append(delta_time)
 
@@ -246,18 +262,44 @@ ov_model.to(device)
 ov_model.compile()
 
 
-quantized_ov_model = quantize(ov_model,
-                              calibration_dataset_size=10,
-                              encoder_sq_alpha=0.50,
-                              decoder_sq_alpha=0.95)
+test_dataset_size = -1
+dataset_label = "mozilla-foundation/common_voice_13_0"
+test_dataset = load_dataset(dataset_label, "en", split="test")
+test_dataset = test_dataset.shuffle(seed=42)
+sliced_test_dataset = islice(test_dataset, test_dataset_size) if test_dataset_size != -1 else test_dataset
+test_samples = [sample for sample in sliced_test_dataset]
 
-# n_samples = 1
-# predict(ov_model, n_samples=n_samples, print_predictions=bool(0))
-# predict(quantized_ov_model, n_samples=n_samples, print_predictions=bool(0))
 
-test_size = 50
-transcription_time_fp32, accuracy_fp32 = validate(ov_model, test_dataset_size=test_size)
-transcription_time_int8, accuracy_int8 = validate(quantized_ov_model, test_dataset_size=test_size)
-print(f"Whisper transcription performance speedup: {transcription_time_fp32 / transcription_time_int8:.3f}")
-print(f"Whisper transcription word accuracy. FP32: {accuracy_fp32:.2f}%. INT8: {accuracy_int8:.2f}%. "
-      f"Accuracy drop :{accuracy_fp32 - accuracy_int8:.2f}%.")
+save_dir = Path("metrics") / dataset_label.split('/')[1]
+metrics_per_size = []
+for i, calibration_dataset_size in enumerate(
+        # list(range(1, 100 + 1, 1)) +
+        # list(range(150, 1000 + 1, 50))
+    range(60, 70 + 1, 1)
+):
+    quantized_ov_model = quantize(ov_model,
+                                  calibration_dataset_size=calibration_dataset_size,
+                                  encoder_sq_alpha=0.50,
+                                  decoder_sq_alpha=0.95,
+                                  cleanup_model=True)
+
+    # n_samples = 1
+    # predict(ov_model, n_samples=n_samples, print_predictions=bool(0))
+    # predict(quantized_ov_model, n_samples=n_samples, print_predictions=bool(0))
+
+    transcription_time_int8, accuracy_int8 = validate(quantized_ov_model, test_samples)
+    metrics_dict = {
+        "calibration_dataset_size": calibration_dataset_size,
+        "time_int8": transcription_time_int8,
+        "accuracy_int8": accuracy_int8
+    }
+    if i == 0:
+        transcription_time_fp32, accuracy_fp32 = validate(ov_model, test_samples)
+        metrics_dict["time_fp32"] = transcription_time_fp32
+        metrics_dict["accuracy_fp32"] = accuracy_fp32
+    print(f"\nSize: {calibration_dataset_size}. Metrics: {metrics_dict}\n")
+    metrics_per_size.append(metrics_dict)
+
+    save_dir.mkdir(exist_ok=True)
+    with open(save_dir / f"with-calibration-shuffle_test-size{test_dataset_size}.json", "w") as f:
+        json.dump(metrics_per_size, f, indent=4)

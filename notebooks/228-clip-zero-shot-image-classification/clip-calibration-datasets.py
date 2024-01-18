@@ -120,11 +120,13 @@ def quantize(calibration_data, ov_model):
         model=ov_model,
         calibration_dataset=nncf.Dataset(calibration_data),
         model_type=nncf.ModelType.TRANSFORMER,
+        subset_size=len(calibration_data)
     )
     return quantized_model
 
 
 def validate(ov_model, test_dataset_size):
+    # Inspired by https://github.com/openai/CLIP/blob/main/notebooks/Prompt_Engineering_for_ImageNet.ipynb
     text_descriptions = [f"This is a photo of a {label}" for label in imagenet_classes]
 
     def preprocess(pil_images):
