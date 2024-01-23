@@ -1,4 +1,5 @@
 import inspect
+import json
 from functools import wraps
 from contextlib import contextmanager
 
@@ -20,13 +21,15 @@ from evaluate import load
 import pprint
 import pickle
 
+from jiwer import wer, wer_standardize
+
 import openvino
 import openvino.runtime as ov
 import nncf
 
 core = Core()
 
-wer = load("wer")
+# wer = load("wer")
 
 DEVICE = 'CPU'
 VERBOSE = bool(1)
@@ -48,6 +51,10 @@ decoder_with_past_total_time = 0
 
 total_corrected_tokens = 0
 
+model_id = "grammar-synthesis-small"
+# model_id = "flan-t5-large-grammar-synthesis"
+grammar_corrector_model_id = f"pszemraj/{model_id}"
+grammar_corrector_dir = Path(model_id)
 
 @contextmanager
 def calibration_data_collection():
@@ -76,8 +83,6 @@ def load_grammar_cheker():
 
 
 def load_grammar_corrector():
-    grammar_corrector_model_id = "pszemraj/flan-t5-large-grammar-synthesis"
-    grammar_corrector_dir = Path("flan-t5-large-grammar-synthesis")
     grammar_corrector_tokenizer = AutoTokenizer.from_pretrained(grammar_corrector_model_id)
 
     if grammar_corrector_dir.exists():
@@ -277,7 +282,7 @@ def collect_calibration_data(ov_decoder, num_calibration_samples, load_calibrati
     return calibration_data
 
 
-@arg_logger
+# @arg_logger
 def compress(grammar_corrector_pipe, quantize,
              load_existing_model=True,
              save_model=True,
@@ -285,7 +290,8 @@ def compress(grammar_corrector_pipe, quantize,
              save_calibration_data=True,
              smooth_quant_alpha=0.5,
              num_calibration_samples=300,
-             preset=nncf.QuantizationPreset.PERFORMANCE):
+             preset=nncf.QuantizationPreset.PERFORMANCE,
+             calibration_data=None):
     if quantize:
         # model_path = Path(f"quantized_models/{preset.value}_{num_calibration_samples}_{smooth_quant_alpha:.2f}")
         # model_path = Path(f"quantized_models/{preset.value}_{num_calibration_samples}_{smooth_quant_alpha:.2f}_max-q1e-4")
@@ -305,20 +311,22 @@ def compress(grammar_corrector_pipe, quantize,
         if not quantize:
             compressed_model = nncf.compress_weights(model)
         else:
-            calibration_data = collect_calibration_data(ov_decoder, num_calibration_samples,
-                                                        load_calibration_data, save_calibration_data)
+            if calibration_data is None:
+                calibration_data = collect_calibration_data(ov_decoder, num_calibration_samples,
+                                                            load_calibration_data, save_calibration_data)
             # calibration_data[300] = None
 
             compressed_model = nncf.quantize(
                 model,
                 calibration_dataset=nncf.Dataset(calibration_data),
-                preset=preset,
+                # preset=preset,
                 subset_size=len(calibration_data),
                 model_type=nncf.ModelType.TRANSFORMER,
                 advanced_parameters=nncf.AdvancedQuantizationParameters(
                     smooth_quant_alpha=smooth_quant_alpha,
+                    disable_bias_correction=True,
                     activations_range_estimator_params=RangeEstimatorParameters(
-                        max=StatisticsCollectorParameters(StatisticsType.QUANTILE),
+                        max=StatisticsCollectorParameters(StatisticsType.QUANTILE)
                     )
                 ),
             )
@@ -338,22 +346,27 @@ def validate(grammar_corrector_pipe, verbose=True, return_per_sample=False, data
     predictions = []
     ground_truths = []
     zipped_dataset = zip(dataset["sentence"], dataset["corrections"])
-    for input_text, references in tqdm(zipped_dataset, desc="Evaluation", disable=not verbose):
-        corrected_text = correct_text(input_text, grammar_checker_pipe, grammar_corrector_pipe,
-                                      disable_tqdm=True)
+    for input_text, references in tqdm(zipped_dataset, desc="Evaluation", disable=not verbose,
+                                       total=len(dataset["sentence"])):
+        # corrected_text = correct_text(input_text, grammar_checker_pipe, grammar_corrector_pipe,
+        #                               disable_tqdm=True)
+        corrected_text = grammar_corrector_pipe(input_text)[0]["generated_text"]
 
         # print(data_item["sentence"])
         # print(grammar_corrector_pipe(data_item["sentence"])[0]["generated_text"])
         # print(corrected_text)
         # print()
 
-        ground_truths.append(references)
-        predictions.append([corrected_text] * len(references))
+        for ref in references:
+            if len(ref) != 0:
+                ground_truths.append(ref)
+                predictions.append(corrected_text)
 
-    word_accuracy = 100 * (1 - wer.compute(references=sum(ground_truths, start=[]),
-                                           predictions=sum(predictions, start=[])))
-    if verbose:
-        print(f"WER: {word_accuracy:.2f}")
+        # ground_truths.extend(references)
+        # predictions.extend([corrected_text] * len(references))
+
+    word_accuracy = (1 - wer(ground_truths, predictions, reference_transform=wer_standardize,
+                             hypothesis_transform=wer_standardize)) * 100
 
     if return_per_sample:
         per_sample_metrics = []
@@ -407,55 +420,103 @@ def quantize_with_accuracy_control(grammar_corrector_pipe, num_calibration_sampl
     grammar_corrector_pipe.model.decoder_with_past._compile()
 
 
-default_text = "It's beeen a whille sinse I've went on a vacashun, and I'm realy exiceted abuot thiss trip. I've hurd " \
-               "that the beech at this destenation is absolootly gorgeos. We've rentted a butiful cabben rite by the " \
-               "oceen, and the veiw is brethtaking. Theres so meny fun activitees planed for this weeke, " \
-               "like snorckling, parasaleeng, and bilding sandcastels. I cant wait to relax in the son with a coldd " \
-               "piña colata.\n\nLast nite, we went out to a local restront for dinar. The menoo was quite exstensive, " \
-               "and I orddered the lasanya, but wen it came, it was compleetely undarcoocked. I was disapointed, " \
-               "but they quicklee replaced it with a new dish. The fud was delisious, and I was so ful afterword. We " \
-               "also orddered a bottel of red wine to acompany our meal, and it was relly good.\n\nTommorrow, " \
-               "we're planing to go to the mountins for a hike. I here the veiw from the peak is incredabel. I hoap " \
-               "the wether is nice and we don't get cauhgt in any rain. We're bringing our dog along, and he loves " \
-               "runing in the outdors.\n\nOveral, this vacashun is off to a grate start, despit the smal hiccups. I " \
-               "cant wait to see what the rest of the weke has in store for us."
-default_text = "It's beeen a whille sinse I've went on a vacashun, and I'm realy exiceted abuot thiss trip."
+# default_text = "It's beeen a whille sinse I've went on a vacashun, and I'm realy exiceted abuot thiss trip. I've hurd " \
+#                "that the beech at this destenation is absolootly gorgeos. We've rentted a butiful cabben rite by the " \
+#                "oceen, and the veiw is brethtaking. Theres so meny fun activitees planed for this weeke, " \
+#                "like snorckling, parasaleeng, and bilding sandcastels. I cant wait to relax in the son with a coldd " \
+#                "piña colata.\n\nLast nite, we went out to a local restront for dinar. The menoo was quite exstensive, " \
+#                "and I orddered the lasanya, but wen it came, it was compleetely undarcoocked. I was disapointed, " \
+#                "but they quicklee replaced it with a new dish. The fud was delisious, and I was so ful afterword. We " \
+#                "also orddered a bottel of red wine to acompany our meal, and it was relly good.\n\nTommorrow, " \
+#                "we're planing to go to the mountins for a hike. I here the veiw from the peak is incredabel. I hoap " \
+#                "the wether is nice and we don't get cauhgt in any rain. We're bringing our dog along, and he loves " \
+#                "runing in the outdors.\n\nOveral, this vacashun is off to a grate start, despit the smal hiccups. I " \
+#                "cant wait to see what the rest of the weke has in store for us."
+# default_text = "It's beeen a whille sinse I've went on a vacashun, and I'm realy exiceted abuot thiss trip."
+#
+# for _ in range(10):
+#     checker_tokenizer, grammar_checker_pipe = load_grammar_cheker()
+#     corrector_tokenizer, grammar_corrector_pipe = load_grammar_corrector()
+#
+#     add_encoder_decoder_wrappers(grammar_corrector_pipe.model.encoder, grammar_corrector_pipe.model.decoder,
+#                                  grammar_corrector_pipe.model.decoder_with_past)
+#
+#     # import numpy as np
+#     # np.seterr(over='raise')
+#     compress(grammar_corrector_pipe,
+#              quantize=bool(1),
+#              load_calibration_data=bool(0),
+#              save_calibration_data=bool(0),
+#              load_existing_model=bool(0),
+#              save_model=bool(0),
+#              smooth_quant_alpha=0.95,
+#              num_calibration_samples=10,
+#              preset=nncf.QuantizationPreset.PERFORMANCE,
+#     )
+#
+#     # quantize_with_accuracy_control(grammar_corrector_pipe, 10)
+#
+#     # corrected_text = correct_text(default_text, grammar_checker_pipe, grammar_corrector_pipe)
+#     # print(corrected_text)
+#     #
+#     # if VERBOSE:
+#     #     print(f"Total corrected tokens: {total_corrected_tokens}")
+#     #     print(f"Total check time: {total_check_time}")
+#     #     print(f"Total correction time: {total_correction_time}")
+#     #     print(f"Encoder total calls: {encoder_call_count}; encoder total time: {encoder_total_time}")
+#     #     print(f"Decoder total calls: {decoder_call_count}; decoder total time: {decoder_total_time}")
+#     #     print(f"Decoder w/past total calls: {decoder_with_past_call_count}; decoder w/past total time: "
+#     #           f"{decoder_with_past_total_time}")
+#
+#     validate(grammar_corrector_pipe)
 
-for _ in range(10):
-    checker_tokenizer, grammar_checker_pipe = load_grammar_cheker()
-    corrector_tokenizer, grammar_corrector_pipe = load_grammar_corrector()
 
-    add_encoder_decoder_wrappers(grammar_corrector_pipe.model.encoder, grammar_corrector_pipe.model.decoder,
-                                 grammar_corrector_pipe.model.decoder_with_past)
+corrector_tokenizer, grammar_corrector_pipe = load_grammar_corrector()
+ov_decoder: OVDecoder = grammar_corrector_pipe.model.decoder_with_past
+ov_model: ov.Model = ov_decoder.model
 
-    # import numpy as np
-    # np.seterr(over='raise')
+test_dataset_size = 748
+test_dataset = datasets.load_dataset("jfleg", split="test").shuffle(seed=41)[:test_dataset_size]
+
+fp32_acc = validate(grammar_corrector_pipe, dataset=test_dataset)
+
+save_dir = Path("metrics") / model_id / f"test_{test_dataset_size}"
+metrics_per_size = []
+start_time = datetime.datetime.now().strftime("%Y-%m-%d %H-%M-%S")
+for i, calibration_dataset_size in enumerate(
+    list(range(1, 100, 1)) +
+    list(range(100, 751, 50))
+    # [1, 2]
+):
+    calibration_data = collect_calibration_data(ov_decoder, calibration_dataset_size,
+                                                load_calibration_data=False, save_calibration_data=False)
+
+    grammar_corrector_pipe.model.decoder_with_past.model = ov_model
+    grammar_corrector_pipe.model.decoder_with_past.request = None
     compress(grammar_corrector_pipe,
-             quantize=bool(1),
-             load_calibration_data=bool(0),
-             save_calibration_data=bool(0),
-             load_existing_model=bool(0),
-             save_model=bool(0),
+             quantize=True,
+             load_existing_model=False,
+             save_model=False,
+             load_calibration_data=False,
+             save_calibration_data=False,
              smooth_quant_alpha=0.95,
-             num_calibration_samples=10,
-             preset=nncf.QuantizationPreset.PERFORMANCE,
-    )
+             num_calibration_samples=len(calibration_data),
+             calibration_data=calibration_data)
 
-    # quantize_with_accuracy_control(grammar_corrector_pipe, 10)
+    int8_acc = validate(grammar_corrector_pipe, dataset=test_dataset)
 
-    # corrected_text = correct_text(default_text, grammar_checker_pipe, grammar_corrector_pipe)
-    # print(corrected_text)
-    #
-    # if VERBOSE:
-    #     print(f"Total corrected tokens: {total_corrected_tokens}")
-    #     print(f"Total check time: {total_check_time}")
-    #     print(f"Total correction time: {total_correction_time}")
-    #     print(f"Encoder total calls: {encoder_call_count}; encoder total time: {encoder_total_time}")
-    #     print(f"Decoder total calls: {decoder_call_count}; decoder total time: {decoder_total_time}")
-    #     print(f"Decoder w/past total calls: {decoder_with_past_call_count}; decoder w/past total time: "
-    #           f"{decoder_with_past_total_time}")
+    metrics_dict = {
+        "calibration_dataset_size": calibration_dataset_size,
+        "accuracy_int8": int8_acc
+    }
+    if i == 0:
+        metrics_dict["accuracy_fp32"] = fp32_acc
+    print(f"\nSize: {calibration_dataset_size}. Metrics: {metrics_dict}\n")
+    metrics_per_size.append(metrics_dict)
 
-    validate(grammar_corrector_pipe)
+    save_dir.mkdir(exist_ok=True, parents=True)
+    with open(save_dir / f"metrics_{start_time}.json".replace(':', '%'), "w") as f:
+        json.dump(metrics_per_size, f, indent=4)
 
 # Text length: 408 tokens
 # Original time: 11.94 / 13.57

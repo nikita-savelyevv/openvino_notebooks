@@ -66,6 +66,22 @@ def plot_clip():
     plt.show()
 
 
+def plot_grammar_correction():
+    with open("../notebooks/214-grammar-correction/metrics/grammar-synthesis-small/test_748/"
+              "metrics_2024-01-22 19-07-05.json", "r") as f:
+        values = json.load(f)
+
+    fp32_acc, xs = plot_from_data(values, "Quantized", "accuracy")
+    plt.hlines([fp32_acc], xmin=min(xs), xmax=max(xs), colors='C3', label="Baseline")
+    plt.ylabel("Accuracy (748 samples)")
+    plt.xlabel("Calibration dataset size")
+    plt.title("Grammar Correction")
+    plt.legend()
+    plt.grid()
+    plt.show()
+
+
 if __name__ == '__main__':
     # plot_distil_whisper()
-    plot_clip()
+    # plot_clip()
+    plot_grammar_correction()
