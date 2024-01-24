@@ -21,6 +21,7 @@ from jiwer import wer, wer_standardize
 
 import nncf
 
+ov_config = {"CACHE_DIR": ""}
 core = ov.Core()
 
 device = "CPU"
@@ -37,13 +38,13 @@ processor = AutoProcessor.from_pretrained(model_id)
 def convert_to_ov():
     if not model_dir.exists():
         ov_model = OVModelForSpeechSeq2Seq.from_pretrained(
-            model_id, export=True, compile=False
+            model_id, export=True, compile=False, ov_config=ov_config
         )
         ov_model.half()
         # ov_model.generation_config = pt_distil_model.generation_config
         ov_model.save_pretrained(model_dir)
     else:
-        ov_model = OVModelForSpeechSeq2Seq.from_pretrained(model_dir, compile=False)
+        ov_model = OVModelForSpeechSeq2Seq.from_pretrained(model_dir, compile=False, ov_config=ov_config)
     return ov_model
 
 
