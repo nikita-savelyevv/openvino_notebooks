@@ -1,3 +1,4 @@
+import io
 import shutil
 from contextlib import contextmanager
 from datetime import datetime
@@ -12,6 +13,7 @@ from pathlib import Path
 from datasets import load_dataset
 from openvino import Tensor
 from optimum.intel.openvino import OVModelForSpeechSeq2Seq
+from scipy.io import wavfile
 from tqdm import tqdm
 from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
 
@@ -79,9 +81,10 @@ class InferRequestWrapper:
         return getattr(self.request, attr)
 
 
-def extract_input_features(sample):
-    audio_array = sample["audio"]["array"]
-    audio_array = resample(audio_array, sample["audio"]["sampling_rate"], 16000)
+def extract_input_features(sample=None, audio_array=None):
+    if audio_array is None:
+        audio_array = sample["audio"]["array"]
+        audio_array = resample(audio_array, sample["audio"]["sampling_rate"], 16000)
     input_features = processor(
         audio_array,
         sampling_rate=16000,
@@ -257,12 +260,32 @@ def validate(ov_model, test_samples):
     return mean_inference_time, word_accuracy
 
 
+def read_audio(audio_path):
+    def audio_to_float(audio):
+        """
+        convert audio signal to floating point format
+        """
+        return audio.astype(np.float32) / np.iinfo(audio.dtype).max
+
+    sample_rate, audio = wavfile.read(
+        io.BytesIO(open(audio_path, 'rb').read()))
+    audio = audio_to_float(audio)
+    if audio.ndim == 2:
+        audio = audio.mean(axis=1)
+    audio = resample(audio, sample_rate, 16000)
+    return audio
+
+
 ov_model = convert_to_ov()
 ov_model.to(device)
 ov_model.compile()
 
+audio = read_audio(Path("downloaded_video.wav"))
+predicted_ids = ov_model.generate(extract_input_features(audio_array=audio))
+transcription = processor.batch_decode(predicted_ids, skip_special_tokens=True)
+print(transcription)
 
-test_dataset_size = -1
+test_dataset_size = 1000
 dataset_label = "mozilla-foundation/common_voice_13_0"
 test_dataset = load_dataset(dataset_label, "en", split="test")
 test_dataset = test_dataset.shuffle(seed=42)
@@ -275,13 +298,18 @@ metrics_per_size = []
 for i, calibration_dataset_size in enumerate(
         # list(range(1, 100 + 1, 1)) +
         # list(range(150, 1000 + 1, 50))
-    range(60, 70 + 1, 1)
+    [68, 69]
 ):
     quantized_ov_model = quantize(ov_model,
                                   calibration_dataset_size=calibration_dataset_size,
                                   encoder_sq_alpha=0.50,
                                   decoder_sq_alpha=0.95,
                                   cleanup_model=True)
+
+    # audio = read_audio(Path("downloaded_video.wav"))
+    # predicted_ids = quantized_ov_model.generate(extract_input_features(audio_array=audio))
+    # transcription = processor.batch_decode(predicted_ids, skip_special_tokens=True)
+    # print(transcription)
 
     # n_samples = 1
     # predict(ov_model, n_samples=n_samples, print_predictions=bool(0))

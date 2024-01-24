@@ -20,6 +20,9 @@ import datetime
 from evaluate import load
 import pprint
 import pickle
+import numpy as np
+import torch
+import importlib
 
 from jiwer import wer, wer_standardize
 
@@ -251,8 +254,7 @@ def collect_calibration_data(ov_decoder, num_calibration_samples, load_calibrati
     else:
         calibration_data = []
 
-        def wrap_for_data_collection():
-            original_fn = ov_decoder.request.start_async
+        def wrap_for_data_collection(original_fn):
             if original_fn.__name__ == "wrapper":
                 return
 
@@ -264,7 +266,8 @@ def collect_calibration_data(ov_decoder, num_calibration_samples, load_calibrati
 
             ov_decoder.request.start_async = wrapper
 
-        wrap_for_data_collection()
+        original_fn = ov_decoder.request.start_async
+        wrap_for_data_collection(original_fn)
 
         num_calibration_samples = min(num_calibration_samples, 755)
         dataset = datasets.load_dataset("jfleg", split=f"validation").shuffle(seed=42)[:num_calibration_samples]
@@ -278,6 +281,8 @@ def collect_calibration_data(ov_decoder, num_calibration_samples, load_calibrati
                 calibration_data_file_path.parent.mkdir()
             with open(calibration_data_file_path, 'wb') as f:
                 pickle.dump(calibration_data, f)
+
+        ov_decoder.request.start_async = original_fn
 
     return calibration_data
 
@@ -295,7 +300,7 @@ def compress(grammar_corrector_pipe, quantize,
     if quantize:
         # model_path = Path(f"quantized_models/{preset.value}_{num_calibration_samples}_{smooth_quant_alpha:.2f}")
         # model_path = Path(f"quantized_models/{preset.value}_{num_calibration_samples}_{smooth_quant_alpha:.2f}_max-q1e-4")
-        model_path = Path(f"quantized_models/{preset.value}_{num_calibration_samples}_{smooth_quant_alpha:.2f}_tmp")
+        model_path = Path(f"quantized_models/{model_id}/{preset.value}_{num_calibration_samples}_{smooth_quant_alpha:.2f}")
     else:
         model_path = Path(f"compressed_model")
 
@@ -316,10 +321,11 @@ def compress(grammar_corrector_pipe, quantize,
                                                             load_calibration_data, save_calibration_data)
             # calibration_data[300] = None
 
+            importlib.reload(nncf)
             compressed_model = nncf.quantize(
                 model,
                 calibration_dataset=nncf.Dataset(calibration_data),
-                # preset=preset,
+                preset=preset,
                 subset_size=len(calibration_data),
                 model_type=nncf.ModelType.TRANSFORMER,
                 advanced_parameters=nncf.AdvancedQuantizationParameters(
@@ -342,12 +348,12 @@ def compress(grammar_corrector_pipe, quantize,
 def validate(grammar_corrector_pipe, verbose=True, return_per_sample=False, dataset=None):
     if dataset is None:
         dataset = datasets.load_dataset("jfleg", split="test").shuffle(seed=42)[:50]
+        dataset = list(zip(*dataset.values()))
 
     predictions = []
     ground_truths = []
-    zipped_dataset = zip(dataset["sentence"], dataset["corrections"])
-    for input_text, references in tqdm(zipped_dataset, desc="Evaluation", disable=not verbose,
-                                       total=len(dataset["sentence"])):
+    dataset_len = len(dataset) if hasattr(dataset, "__len__") else None
+    for input_text, references in tqdm(dataset, desc="Evaluation", disable=not verbose, total=dataset_len):
         # corrected_text = correct_text(input_text, grammar_checker_pipe, grammar_corrector_pipe,
         #                               disable_tqdm=True)
         corrected_text = grammar_corrector_pipe(input_text)[0]["generated_text"]
@@ -371,7 +377,7 @@ def validate(grammar_corrector_pipe, verbose=True, return_per_sample=False, data
     if return_per_sample:
         per_sample_metrics = []
         for gts, ps in zip(ground_truths, predictions):
-            acc = 100 * (1 - wer.compute(references=gts, predictions=ps))
+            acc = 100 * (1 - wer(gts, ps, reference_transform=wer_standardize, hypothesis_transform=wer_standardize))
             per_sample_metrics.append(acc)
         return word_accuracy, per_sample_metrics
     return word_accuracy
@@ -382,9 +388,10 @@ def quantize_with_accuracy_control(grammar_corrector_pipe, num_calibration_sampl
     model: ov.Model = ov_decoder.model
 
     calibration_data = collect_calibration_data(ov_decoder, num_calibration_samples,
-                                                load_calibration_data=True, save_calibration_data=True)
+                                                load_calibration_data=False, save_calibration_data=False)
     calibration_dataset = nncf.Dataset(calibration_data)
-    validation_dataset = nncf.Dataset(datasets.load_dataset("jfleg", split=f"test[:50]"))
+    validation_samples = datasets.load_dataset("jfleg", split=f"test")[:50]
+    validation_dataset = nncf.Dataset(list(zip(*validation_samples.values())))
 
     def validate_fn(model, data):
         grammar_corrector_pipe.model.decoder_with_past.model = model
@@ -420,20 +427,20 @@ def quantize_with_accuracy_control(grammar_corrector_pipe, num_calibration_sampl
     grammar_corrector_pipe.model.decoder_with_past._compile()
 
 
-# default_text = "It's beeen a whille sinse I've went on a vacashun, and I'm realy exiceted abuot thiss trip. I've hurd " \
-#                "that the beech at this destenation is absolootly gorgeos. We've rentted a butiful cabben rite by the " \
-#                "oceen, and the veiw is brethtaking. Theres so meny fun activitees planed for this weeke, " \
-#                "like snorckling, parasaleeng, and bilding sandcastels. I cant wait to relax in the son with a coldd " \
-#                "piña colata.\n\nLast nite, we went out to a local restront for dinar. The menoo was quite exstensive, " \
-#                "and I orddered the lasanya, but wen it came, it was compleetely undarcoocked. I was disapointed, " \
-#                "but they quicklee replaced it with a new dish. The fud was delisious, and I was so ful afterword. We " \
-#                "also orddered a bottel of red wine to acompany our meal, and it was relly good.\n\nTommorrow, " \
-#                "we're planing to go to the mountins for a hike. I here the veiw from the peak is incredabel. I hoap " \
-#                "the wether is nice and we don't get cauhgt in any rain. We're bringing our dog along, and he loves " \
-#                "runing in the outdors.\n\nOveral, this vacashun is off to a grate start, despit the smal hiccups. I " \
-#                "cant wait to see what the rest of the weke has in store for us."
-# default_text = "It's beeen a whille sinse I've went on a vacashun, and I'm realy exiceted abuot thiss trip."
-#
+default_text = "It's beeen a whille sinse I've went on a vacashun, and I'm realy exiceted abuot thiss trip. I've hurd " \
+               "that the beech at this destenation is absolootly gorgeos. We've rentted a butiful cabben rite by the " \
+               "oceen, and the veiw is brethtaking. Theres so meny fun activitees planed for this weeke, " \
+               "like snorckling, parasaleeng, and bilding sandcastels. I cant wait to relax in the son with a coldd " \
+               "piña colata.\n\nLast nite, we went out to a local restront for dinar. The menoo was quite exstensive, " \
+               "and I orddered the lasanya, but wen it came, it was compleetely undarcoocked. I was disapointed, " \
+               "but they quicklee replaced it with a new dish. The fud was delisious, and I was so ful afterword. We " \
+               "also orddered a bottel of red wine to acompany our meal, and it was relly good.\n\nTommorrow, " \
+               "we're planing to go to the mountins for a hike. I here the veiw from the peak is incredabel. I hoap " \
+               "the wether is nice and we don't get cauhgt in any rain. We're bringing our dog along, and he loves " \
+               "runing in the outdors.\n\nOveral, this vacashun is off to a grate start, despit the smal hiccups. I " \
+               "cant wait to see what the rest of the weke has in store for us."
+default_text = "It's beeen a whille sinse I've went on a vacashun, and I'm realy exiceted abuot thiss trip."
+
 # for _ in range(10):
 #     checker_tokenizer, grammar_checker_pipe = load_grammar_cheker()
 #     corrector_tokenizer, grammar_corrector_pipe = load_grammar_corrector()
@@ -475,31 +482,48 @@ corrector_tokenizer, grammar_corrector_pipe = load_grammar_corrector()
 ov_decoder: OVDecoder = grammar_corrector_pipe.model.decoder_with_past
 ov_model: ov.Model = ov_decoder.model
 
+# checker_tokenizer, grammar_checker_pipe = load_grammar_cheker()
+# corrector_tokenizer, grammar_corrector_pipe = load_grammar_corrector()
+# # quantize_with_accuracy_control(grammar_corrector_pipe, 1)
+# grammar_corrector_pipe.model.decoder_with_past.model = core.read_model(
+#     Path(f"quantized_models/{model_id}/mixed_2174_0.95/openvino_model.xml"))
+# grammar_corrector_pipe.model.decoder_with_past.request = None
+# grammar_corrector_pipe.model.decoder_with_past._compile()
+# corrected_text = correct_text(default_text, grammar_checker_pipe, grammar_corrector_pipe)
+# print(default_text)
+# print(corrected_text)
+# exit(0)
+
 test_dataset_size = 748
 test_dataset = datasets.load_dataset("jfleg", split="test").shuffle(seed=41)[:test_dataset_size]
+test_dataset = list(zip(*test_dataset.values()))
 
 fp32_acc = validate(grammar_corrector_pipe, dataset=test_dataset)
+# fp32_acc = None
 
 save_dir = Path("metrics") / model_id / f"test_{test_dataset_size}"
 metrics_per_size = []
 start_time = datetime.datetime.now().strftime("%Y-%m-%d %H-%M-%S")
 for i, calibration_dataset_size in enumerate(
-    list(range(1, 100, 1)) +
+    list(reversed(range(1, 100, 1))) +
     list(range(100, 751, 50))
     # [1, 2]
+    # [1, 91, 94, 300]
 ):
     calibration_data = collect_calibration_data(ov_decoder, calibration_dataset_size,
                                                 load_calibration_data=False, save_calibration_data=False)
+    # continue
 
     grammar_corrector_pipe.model.decoder_with_past.model = ov_model
     grammar_corrector_pipe.model.decoder_with_past.request = None
     compress(grammar_corrector_pipe,
              quantize=True,
              load_existing_model=False,
-             save_model=False,
+             save_model=True,
              load_calibration_data=False,
              save_calibration_data=False,
              smooth_quant_alpha=0.95,
+             preset=nncf.QuantizationPreset.MIXED,
              num_calibration_samples=len(calibration_data),
              calibration_data=calibration_data)
 

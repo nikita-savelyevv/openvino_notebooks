@@ -331,5 +331,93 @@
     {
         "calibration_dataset_size": 83,
         "accuracy_int8": 55.89491257358756
+    },
+    {
+        "calibration_dataset_size": 84,
+        "accuracy_int8": 56.0390123890695
+    },
+    {
+        "calibration_dataset_size": 85,
+        "accuracy_int8": 57.90352341622002
+    },
+    {
+        "calibration_dataset_size": 86,
+        "accuracy_int8": 50.03602495387048
+    },
+    {
+        "calibration_dataset_size": 87,
+        "accuracy_int8": 8.25410772339865
+    },
+    {
+        "calibration_dataset_size": 88,
+        "accuracy_int8": 54.10069413935506
+    },
+    {
+        "calibration_dataset_size": 89,
+        "accuracy_int8": 45.05403743080573
+    },
+    {
+        "calibration_dataset_size": 90,
+        "accuracy_int8": 44.80449872594675
+    },
+    {
+        "calibration_dataset_size": 91,
+        "accuracy_int8": 59.30058870046568
+    },
+    {
+        "calibration_dataset_size": 92,
+        "accuracy_int8": 47.407081978736485
+    },
+    {
+        "calibration_dataset_size": 93,
+        "accuracy_int8": 39.96661101836394
+    },
+    {
+        "calibration_dataset_size": 94,
+        "accuracy_int8": 9.533432914506633
+    },
+    {
+        "calibration_dataset_size": 95,
+        "accuracy_int8": 53.44873034004042
+    },
+    {
+        "calibration_dataset_size": 96,
+        "accuracy_int8": 57.79984184166593
+    },
+    {
+        "calibration_dataset_size": 97,
+        "accuracy_int8": 48.15218346366752
+    },
+    {
+        "calibration_dataset_size": 98,
+        "accuracy_int8": 39.01063175467885
+    },
+    {
+        "calibration_dataset_size": 99,
+        "accuracy_int8": 42.210702047271766
+    },
+    {
+        "calibration_dataset_size": 100,
+        "accuracy_int8": 38.98602934715755
+    },
+    {
+        "calibration_dataset_size": 150,
+        "accuracy_int8": 56.46428257622353
+    },
+    {
+        "calibration_dataset_size": 200,
+        "accuracy_int8": 54.102451454178016
+    },
+    {
+        "calibration_dataset_size": 250,
+        "accuracy_int8": 43.62358316492399
+    },
+    {
+        "calibration_dataset_size": 300,
+        "accuracy_int8": 40.95773657850804
+    },
+    {
+        "calibration_dataset_size": 350,
+        "accuracy_int8": 56.232317019594056
     }
 ]

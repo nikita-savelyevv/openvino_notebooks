@@ -67,7 +67,7 @@ def plot_clip():
 
 
 def plot_grammar_correction():
-    with open("../notebooks/214-grammar-correction/metrics/grammar-synthesis-small/test_748/"
+    with open("../notebooks/214-grammar-correction/metrics/grammar-synthesis-small/test_748_old/"
               "metrics_2024-01-22 19-07-05.json", "r") as f:
         values = json.load(f)
 
