@@ -269,20 +269,21 @@ ov_model = get_ov_model()
 # infer(compiled_model, Path("./"))
 
 quantized_model_path = \
-    QUANTIZED_MODEL_DIR / "dataset3/size300/359-512/interpolate_bilinear/model.xml"
+    QUANTIZED_MODEL_DIR / "dataset3/size10_359-512/model.xml"
+# quantized_model_path = Path("qwac_att3/0.050/model.xml")
 
-# validation_dataset_size = 10
-# np.random.seed(41)
-# validation_dirs = np.random.choice(list(validation_data_dir.rglob("**")), validation_dataset_size, replace=False)
+validation_dataset_size = 100
+np.random.seed(41)
+validation_dirs = np.random.choice(list(validation_data_dir.rglob("**")), validation_dataset_size, replace=False)
 # print(validate(ov_model, validation_dirs, verbose=True)[0])
-# print(validate(core.compile_model(quantized_model_path), validation_dirs, verbose=True)[0])
+print(validate(core.compile_model(quantized_model_path), validation_dirs, verbose=True)[0])
 # print(validate(core.compile_model("./models/quantized/dataset3/size10_359-512/ignored-scopes/interpolate_bilinear_resize/model.xml"), validation_dirs, verbose=True)[0])
 # print(validate(core.compile_model("qwac/0.050/model.xml"), validation_dirs, verbose=True)[0])
 # exit(0)
 
 # quantized_model_path = QUANTIZED_MODEL_DIR / "dataset2/120-128-time0.50-crop1024x768/model.xml"
 memory_logger = MemoryLogger(quantized_model_path.parent).start_logging()
-quantize(ov_model, quantized_model_path, calibration_dataset_size=300)
+quantize(ov_model, quantized_model_path, calibration_dataset_size=10)
 memory_logger.stop_logging()
 
 compiled_quantized_model = core.compile_model(quantized_model_path, device)
