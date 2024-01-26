@@ -54,8 +54,8 @@ decoder_with_past_total_time = 0
 
 total_corrected_tokens = 0
 
-model_id = "grammar-synthesis-small"
-# model_id = "flan-t5-large-grammar-synthesis"
+# model_id = "grammar-synthesis-small"
+model_id = "flan-t5-large-grammar-synthesis"
 grammar_corrector_model_id = f"pszemraj/{model_id}"
 grammar_corrector_dir = Path(model_id)
 
@@ -505,7 +505,7 @@ save_dir = Path("metrics") / model_id / f"test_{test_dataset_size}"
 metrics_per_size = []
 start_time = datetime.datetime.now().strftime("%Y-%m-%d %H-%M-%S")
 for i, calibration_dataset_size in enumerate(
-    list(reversed(range(1, 100, 1))) +
+    list(range(5, 100, 5)) +
     list(range(100, 751, 50))
     # list(range(2, 101, 2))
     # [1, 2]
