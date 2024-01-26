@@ -507,6 +507,7 @@ start_time = datetime.datetime.now().strftime("%Y-%m-%d %H-%M-%S")
 for i, calibration_dataset_size in enumerate(
     list(reversed(range(1, 100, 1))) +
     list(range(100, 751, 50))
+    # list(range(2, 101, 2))
     # [1, 2]
     # [1, 91, 94, 300]
 ):

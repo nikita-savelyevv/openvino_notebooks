@@ -11,6 +11,7 @@ def plot_from_data(data, label, accuracy_field_name):
 
         if i == 0:
             fp32_acc = d[f"{accuracy_field_name}_fp32"]
+    xs, ys = zip(*sorted(list(zip(xs, ys)), key=lambda it: it[0]))
     plt.plot(xs, ys, label=label)
     return fp32_acc, xs
 
@@ -67,11 +68,15 @@ def plot_clip():
 
 
 def plot_grammar_correction():
-    with open("../notebooks/214-grammar-correction/metrics/grammar-synthesis-small/test_748_old/"
-              "metrics_2024-01-22 19-07-05.json", "r") as f:
+    with open("../notebooks/214-grammar-correction/metrics/grammar-synthesis-small/test_748"
+              "/metrics_2024-01-24 14-34-28.json", "r") as f:
         values = json.load(f)
+    with open("../notebooks/214-grammar-correction/metrics/grammar-synthesis-small/test_748"
+              "/metrics_2024-01-25 21-52-48.json", "r") as f:
+        values_no_quantile = json.load(f)
 
     fp32_acc, xs = plot_from_data(values, "Quantized", "accuracy")
+    plot_from_data(values_no_quantile, "Quantized (no quantile)", "accuracy")
     plt.hlines([fp32_acc], xmin=min(xs), xmax=max(xs), colors='C3', label="Baseline")
     plt.ylabel("Accuracy (748 samples)")
     plt.xlabel("Calibration dataset size")
