@@ -26,8 +26,8 @@ core = ov.Core()
 
 device = "CPU"
 
-# model_size_id = "large-v2"
-model_size_id = "small.en"
+model_size_id = "large-v2"
+# model_size_id = "small.en"
 model_id = f"distil-whisper/distil-{model_size_id}"
 model_dir = Path(model_id.split("/")[-1])
 quantized_model_dir = model_dir / "quantized"
@@ -281,10 +281,10 @@ ov_model = convert_to_ov()
 ov_model.to(device)
 ov_model.compile()
 
-audio = read_audio(Path("downloaded_video.wav"))
-predicted_ids = ov_model.generate(extract_input_features(audio_array=audio))
-transcription = processor.batch_decode(predicted_ids, skip_special_tokens=True)
-print(transcription)
+# audio = read_audio(Path("downloaded_video.wav"))
+# predicted_ids = ov_model.generate(extract_input_features(audio_array=audio))
+# transcription = processor.batch_decode(predicted_ids, skip_special_tokens=True)
+# print(transcription)
 
 test_dataset_size = 1000
 dataset_label = "mozilla-foundation/common_voice_13_0"
@@ -294,12 +294,12 @@ sliced_test_dataset = islice(test_dataset, test_dataset_size) if test_dataset_si
 test_samples = [sample for sample in sliced_test_dataset]
 
 
-save_dir = Path("metrics") / dataset_label.split('/')[1]
+save_dir = Path("metrics") / model_size_id / dataset_label.split('/')[1]
 metrics_per_size = []
 for i, calibration_dataset_size in enumerate(
-        # list(range(1, 100 + 1, 1)) +
-        # list(range(150, 1000 + 1, 50))
-    [68, 69]
+        list(range(1, 100, 1)) +
+        list(range(100, 1000 + 1, 50))
+    # [68, 69]
 ):
     quantized_ov_model = quantize(ov_model,
                                   calibration_dataset_size=calibration_dataset_size,
@@ -330,5 +330,5 @@ for i, calibration_dataset_size in enumerate(
     metrics_per_size.append(metrics_dict)
 
     save_dir.mkdir(exist_ok=True)
-    with open(save_dir / f"with-calibration-shuffle_test-size{test_dataset_size}.json", "w") as f:
+    with open(save_dir / f"test-size{test_dataset_size}.json", "w") as f:
         json.dump(metrics_per_size, f, indent=4)
