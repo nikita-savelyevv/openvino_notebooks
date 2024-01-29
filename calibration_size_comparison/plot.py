@@ -25,15 +25,22 @@ def plot_distil_whisper():
     with open("../notebooks/267-distil-whisper-asr/metrics/common_voice_13_0/with-calibration-shuffle_test-size-1.json",
               "r") as f:
         distil_whisper_with_shuffle_full_test = json.load(f)
-
+    with open("../notebooks/267-distil-whisper-asr/metrics/large-v2/test-size1000.json", "r") as f:
+        distil_whisper_large = json.load(f)
 
     # fp32_acc, xs = plot_from_data(distil_whisper_without_shuffle, "Without shuffle")
-    fp32_acc_1000, xs = plot_from_data(distil_whisper_with_shuffle, "1000 samples", "accuracy")
-    fp32_acc_full, _ = plot_from_data(distil_whisper_with_shuffle_full_test, "Full dataset", "accuracy")
-    plt.hlines([fp32_acc_full], xmin=min(xs), xmax=max(xs), colors='r', label="Baseline full dataset")
-    plt.hlines([fp32_acc_1000], xmin=min(xs), xmax=max(xs), colors='orange', label="Baseline 1000 samples")
+    # fp32_acc_1000, xs = plot_from_data(distil_whisper_with_shuffle, "1000 samples", "accuracy")
+    # fp32_acc_full, _ = plot_from_data(distil_whisper_with_shuffle_full_test, "Full dataset", "accuracy")
+    # plt.hlines([fp32_acc_full], xmin=min(xs), xmax=max(xs), colors='r', label="Baseline full dataset")
+    # plt.hlines([fp32_acc_1000], xmin=min(xs), xmax=max(xs), colors='orange', label="Baseline 1000 samples")
+
+    fp32_acc_large, xs = plot_from_data(distil_whisper_large, "1000 samples", "accuracy")
+    plt.hlines([fp32_acc_large], xmin=min(xs), xmax=max(xs), colors='r', label="Baseline")
+
     plt.ylabel("Accuracy on common_voice_13")
     plt.xlabel("Calibration dataset size")
+    plt.title("Distil-Whisper large-v2")
+    plt.tight_layout()
     plt.legend()
     plt.grid()
     plt.show()
@@ -83,7 +90,7 @@ def plot_grammar_correction():
     plt.hlines([fp32_acc], xmin=min(xs), xmax=max(xs), colors='C3', label="Baseline")
     plt.ylabel("Accuracy (748 samples)")
     plt.xlabel("Calibration dataset size")
-    plt.title("Grammar Correction")
+    plt.title("Grammar Correction(Large)")
     plt.tight_layout()
     plt.legend()
     plt.grid()
@@ -91,6 +98,6 @@ def plot_grammar_correction():
 
 
 if __name__ == '__main__':
-    # plot_distil_whisper()
+    plot_distil_whisper()
     # plot_clip()
-    plot_grammar_correction()
+    # plot_grammar_correction()
