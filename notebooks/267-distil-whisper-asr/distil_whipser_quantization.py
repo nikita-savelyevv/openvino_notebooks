@@ -329,6 +329,6 @@ for i, calibration_dataset_size in enumerate(
     print(f"\nSize: {calibration_dataset_size}. Metrics: {metrics_dict}\n")
     metrics_per_size.append(metrics_dict)
 
-    save_dir.mkdir(exist_ok=True)
+    save_dir.mkdir(exist_ok=True, parents=True)
     with open(save_dir / f"test-size{test_dataset_size}.json", "w") as f:
         json.dump(metrics_per_size, f, indent=4)
