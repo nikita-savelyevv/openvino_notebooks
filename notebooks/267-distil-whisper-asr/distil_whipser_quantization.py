@@ -26,8 +26,8 @@ core = ov.Core()
 
 device = "CPU"
 
-model_size_id = "large-v2"
-# model_size_id = "small.en"
+# model_size_id = "large-v2"
+model_size_id = "small.en"
 model_id = f"distil-whisper/distil-{model_size_id}"
 model_dir = Path(model_id.split("/")[-1])
 quantized_model_dir = model_dir / "quantized"
@@ -162,17 +162,17 @@ def quantize(ov_model, calibration_dataset_size, encoder_sq_alpha, decoder_sq_al
     if not save_dir.exists():
         encoder_calibration_data, decoder_calibration_data = collect_calibration_dataset(ov_model,
                                                                                          calibration_dataset_size)
-        print("Quantizing encoder")
-        quantized_encoder = nncf.quantize(
-            ov_model.encoder.model,
-            nncf.Dataset(encoder_calibration_data),
-            preset=nncf.QuantizationPreset.MIXED,
-            subset_size=len(encoder_calibration_data),
-            fast_bias_correction=True,
-            model_type=nncf.ModelType.TRANSFORMER,
-            advanced_parameters=nncf.AdvancedQuantizationParameters(smooth_quant_alpha=encoder_sq_alpha)
-        )
-        ov.save_model(quantized_encoder, save_dir / "openvino_encoder_model.xml")
+        # print("Quantizing encoder")
+        # quantized_encoder = nncf.quantize(
+        #     ov_model.encoder.model,
+        #     nncf.Dataset(encoder_calibration_data),
+        #     preset=nncf.QuantizationPreset.MIXED,
+        #     subset_size=len(encoder_calibration_data),
+        #     fast_bias_correction=True,
+        #     model_type=nncf.ModelType.TRANSFORMER,
+        #     advanced_parameters=nncf.AdvancedQuantizationParameters(smooth_quant_alpha=encoder_sq_alpha)
+        # )
+        # ov.save_model(quantized_encoder, save_dir / "openvino_encoder_model.xml")
 
         print("Quantizing decoder with past")
         quantized_decoder_with_past = nncf.quantize(
@@ -299,7 +299,7 @@ metrics_per_size = []
 for i, calibration_dataset_size in enumerate(
         list(range(1, 100, 1)) +
         list(range(100, 1000 + 1, 50))
-    # [68, 69]
+    # [69]
 ):
     quantized_ov_model = quantize(ov_model,
                                   calibration_dataset_size=calibration_dataset_size,
@@ -330,5 +330,5 @@ for i, calibration_dataset_size in enumerate(
     metrics_per_size.append(metrics_dict)
 
     save_dir.mkdir(exist_ok=True, parents=True)
-    with open(save_dir / f"test-size{test_dataset_size}.json", "w") as f:
+    with open(save_dir / f"test-size{test_dataset_size}_decoder-only.json", "w") as f:
         json.dump(metrics_per_size, f, indent=4)
