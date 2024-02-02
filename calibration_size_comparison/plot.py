@@ -27,6 +27,8 @@ def plot_distil_whisper():
         distil_whisper_with_shuffle_full_test = json.load(f)
     with open("../notebooks/267-distil-whisper-asr/metrics/large-v2/test-size1000.json", "r") as f:
         distil_whisper_large = json.load(f)
+    with open("../notebooks/267-distil-whisper-asr/metrics/small.en/common_voice_13_0/test-size1000_decoder-only.json", "r") as f:
+        distil_whisper_small_decoder_only = json.load(f)
 
     # fp32_acc, xs = plot_from_data(distil_whisper_without_shuffle, "Without shuffle")
     # fp32_acc_1000, xs = plot_from_data(distil_whisper_with_shuffle, "1000 samples", "accuracy")
@@ -34,8 +36,12 @@ def plot_distil_whisper():
     # plt.hlines([fp32_acc_full], xmin=min(xs), xmax=max(xs), colors='r', label="Baseline full dataset")
     # plt.hlines([fp32_acc_1000], xmin=min(xs), xmax=max(xs), colors='orange', label="Baseline 1000 samples")
 
-    fp32_acc_large, xs = plot_from_data(distil_whisper_large, "1000 samples", "accuracy")
-    plt.hlines([fp32_acc_large], xmin=min(xs), xmax=max(xs), colors='r', label="Baseline")
+    # fp32_acc_large, xs = plot_from_data(distil_whisper_large, "1000 samples", "accuracy")
+    # plt.hlines([fp32_acc_large], xmin=min(xs), xmax=max(xs), colors='r', label="Baseline")
+
+    fp32_acc_1000, xs = plot_from_data(distil_whisper_with_shuffle, "Enc + Dec", "accuracy")
+    plot_from_data(distil_whisper_small_decoder_only, "Dec", "accuracy")
+    plt.hlines([fp32_acc_1000], xmin=min(xs), xmax=max(xs), colors='r', label="Baseline")
 
     plt.ylabel("Accuracy on common_voice_13")
     plt.xlabel("Calibration dataset size")

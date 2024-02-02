@@ -11,6 +11,8 @@ import numpy as np
 import openvino as ov
 from pathlib import Path
 from datasets import load_dataset
+from nncf.quantization.range_estimator import RangeEstimatorParameters, StatisticsCollectorParameters, StatisticsType, \
+    AggregatorType
 from openvino import Tensor
 from optimum.intel.openvino import OVModelForSpeechSeq2Seq
 from scipy.io import wavfile
@@ -172,7 +174,7 @@ def quantize(ov_model, calibration_dataset_size, encoder_sq_alpha, decoder_sq_al
         #     model_type=nncf.ModelType.TRANSFORMER,
         #     advanced_parameters=nncf.AdvancedQuantizationParameters(smooth_quant_alpha=encoder_sq_alpha)
         # )
-        # ov.save_model(quantized_encoder, save_dir / "openvino_encoder_model.xml")
+        ov.save_model(ov_model.encoder.model, save_dir / "openvino_encoder_model.xml")
 
         print("Quantizing decoder with past")
         quantized_decoder_with_past = nncf.quantize(
@@ -182,7 +184,13 @@ def quantize(ov_model, calibration_dataset_size, encoder_sq_alpha, decoder_sq_al
             subset_size=len(decoder_calibration_data),
             fast_bias_correction=True,
             model_type=nncf.ModelType.TRANSFORMER,
-            advanced_parameters=nncf.AdvancedQuantizationParameters(smooth_quant_alpha=decoder_sq_alpha)
+            advanced_parameters=nncf.AdvancedQuantizationParameters(
+                smooth_quant_alpha=decoder_sq_alpha,
+                # activations_range_estimator_params=RangeEstimatorParameters(
+                #     min=StatisticsCollectorParameters(statistics_type=StatisticsType.MIN, aggregator_type=AggregatorType.MEDIAN),
+                #     max=StatisticsCollectorParameters(statistics_type=StatisticsType.MAX, aggregator_type=AggregatorType.MEDIAN),
+                # )
+            )
         )
         ov.save_model(quantized_decoder_with_past, save_dir / "openvino_decoder_with_past_model.xml")
 
@@ -297,9 +305,9 @@ test_samples = [sample for sample in sliced_test_dataset]
 save_dir = Path("metrics") / model_size_id / dataset_label.split('/')[1]
 metrics_per_size = []
 for i, calibration_dataset_size in enumerate(
-        list(range(1, 100, 1)) +
-        list(range(100, 1000 + 1, 50))
-    # [69]
+        # list(range(1, 100, 1)) +
+        # list(range(100, 1000 + 1, 50))
+    [69]
 ):
     quantized_ov_model = quantize(ov_model,
                                   calibration_dataset_size=calibration_dataset_size,
@@ -322,10 +330,10 @@ for i, calibration_dataset_size in enumerate(
         "time_int8": transcription_time_int8,
         "accuracy_int8": accuracy_int8
     }
-    if i == 0:
-        transcription_time_fp32, accuracy_fp32 = validate(ov_model, test_samples)
-        metrics_dict["time_fp32"] = transcription_time_fp32
-        metrics_dict["accuracy_fp32"] = accuracy_fp32
+    # if i == 0:
+    #     transcription_time_fp32, accuracy_fp32 = validate(ov_model, test_samples)
+    #     metrics_dict["time_fp32"] = transcription_time_fp32
+    #     metrics_dict["accuracy_fp32"] = accuracy_fp32
     print(f"\nSize: {calibration_dataset_size}. Metrics: {metrics_dict}\n")
     metrics_per_size.append(metrics_dict)
 
