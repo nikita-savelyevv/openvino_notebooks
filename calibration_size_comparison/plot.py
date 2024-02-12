@@ -13,7 +13,7 @@ def plot_from_data(data, label, accuracy_field_name):
             fp32_acc = d[f"{accuracy_field_name}_fp32"]
     xs, ys = zip(*sorted(list(zip(xs, ys)), key=lambda it: it[0]))
     plt.plot(xs, ys, label=label)
-    return fp32_acc, xs
+    return fp32_acc, xs, ys
 
 
 def plot_distil_whisper():
@@ -30,16 +30,16 @@ def plot_distil_whisper():
     with open("../notebooks/267-distil-whisper-asr/metrics/small.en/common_voice_13_0/test-size1000_decoder-only.json", "r") as f:
         distil_whisper_small_decoder_only = json.load(f)
 
-    # fp32_acc, xs = plot_from_data(distil_whisper_without_shuffle, "Without shuffle")
-    # fp32_acc_1000, xs = plot_from_data(distil_whisper_with_shuffle, "1000 samples", "accuracy")
+    # fp32_acc, xs, _ = plot_from_data(distil_whisper_without_shuffle, "Without shuffle")
+    # fp32_acc_1000, xs, _ = plot_from_data(distil_whisper_with_shuffle, "1000 samples", "accuracy")
     # fp32_acc_full, _ = plot_from_data(distil_whisper_with_shuffle_full_test, "Full dataset", "accuracy")
     # plt.hlines([fp32_acc_full], xmin=min(xs), xmax=max(xs), colors='r', label="Baseline full dataset")
     # plt.hlines([fp32_acc_1000], xmin=min(xs), xmax=max(xs), colors='orange', label="Baseline 1000 samples")
 
-    # fp32_acc_large, xs = plot_from_data(distil_whisper_large, "1000 samples", "accuracy")
+    # fp32_acc_large, xs, _ = plot_from_data(distil_whisper_large, "1000 samples", "accuracy")
     # plt.hlines([fp32_acc_large], xmin=min(xs), xmax=max(xs), colors='r', label="Baseline")
 
-    fp32_acc_1000, xs = plot_from_data(distil_whisper_with_shuffle, "Enc + Dec", "accuracy")
+    fp32_acc_1000, xs, _ = plot_from_data(distil_whisper_with_shuffle, "Enc + Dec", "accuracy")
     plot_from_data(distil_whisper_small_decoder_only, "Dec", "accuracy")
     plt.hlines([fp32_acc_1000], xmin=min(xs), xmax=max(xs), colors='r', label="Baseline")
 
@@ -60,8 +60,8 @@ def plot_clip():
               "/metrics_2024-01-17 23-03-22.json", "r") as f:
         spr_values = json.load(f)
 
-    # fp32_acc_core, xs = plot_from_data(core_values, "Core i9", "top1")
-    # fp32_acc_spr, _ = plot_from_data(spr_values, "SPR", "top1")
+    # fp32_acc_core, xs, _ = plot_from_data(core_values, "Core i9", "top1")
+    # fp32_acc_spr, _, _ = plot_from_data(spr_values, "SPR", "top1")
     # plt.hlines([fp32_acc_core], xmin=min(xs), xmax=max(xs), colors='C5', label="Baseline on Core i9")
     # plt.hlines([fp32_acc_spr], xmin=min(xs), xmax=max(xs), colors='C6', label="Baseline on SPR")
     # plt.ylabel("Top-1 accuracy on ImageNet (1000 images)")
@@ -70,7 +70,7 @@ def plot_clip():
     # plt.grid()
     # plt.show()
 
-    fp32_acc, xs = plot_from_data(spr_values, "Quantized", "top1")
+    fp32_acc, xs, _ = plot_from_data(spr_values, "Quantized", "top1")
     plt.hlines([fp32_acc], xmin=min(xs), xmax=max(xs), colors='C3', label="Baseline")
     plt.ylabel("Top-1 accuracy on ImageNet (1000 images)")
     plt.xlabel("Calibration dataset size")
@@ -91,7 +91,7 @@ def plot_grammar_correction():
     #           "/metrics_2024-01-25 21-52-48.json", "r") as f:
     #     values_no_quantile = json.load(f)
 
-    fp32_acc, xs = plot_from_data(values, "Quantized", "accuracy")
+    fp32_acc, xs, _ = plot_from_data(values, "Quantized", "accuracy")
     # plot_from_data(values_no_quantile, "Quantized (no quantile)", "accuracy")
     plt.hlines([fp32_acc], xmin=min(xs), xmax=max(xs), colors='C3', label="Baseline")
     plt.ylabel("Accuracy (748 samples)")

@@ -305,10 +305,13 @@ test_samples = [sample for sample in sliced_test_dataset]
 save_dir = Path("metrics") / model_size_id / dataset_label.split('/')[1]
 metrics_per_size = []
 for i, calibration_dataset_size in enumerate(
-        # list(range(1, 100, 1)) +
-        # list(range(100, 1000 + 1, 50))
-    [69]
+        list(range(1, 100, 1)) +
+        list(range(100, 1000 + 1, 50))
+    # [1]
 ):
+    import nncf.quantization.algorithms.pipeline as pipeline_module
+    pipeline_module.write_stats_filepath = Path(f"ptq_stats/stats_size{calibration_dataset_size}.pkl")
+
     quantized_ov_model = quantize(ov_model,
                                   calibration_dataset_size=calibration_dataset_size,
                                   encoder_sq_alpha=0.50,
@@ -324,19 +327,19 @@ for i, calibration_dataset_size in enumerate(
     # predict(ov_model, n_samples=n_samples, print_predictions=bool(0))
     # predict(quantized_ov_model, n_samples=n_samples, print_predictions=bool(0))
 
-    transcription_time_int8, accuracy_int8 = validate(quantized_ov_model, test_samples)
-    metrics_dict = {
-        "calibration_dataset_size": calibration_dataset_size,
-        "time_int8": transcription_time_int8,
-        "accuracy_int8": accuracy_int8
-    }
+    # transcription_time_int8, accuracy_int8 = validate(quantized_ov_model, test_samples)
+    # metrics_dict = {
+    #     "calibration_dataset_size": calibration_dataset_size,
+    #     "time_int8": transcription_time_int8,
+    #     "accuracy_int8": accuracy_int8
+    # }
     # if i == 0:
     #     transcription_time_fp32, accuracy_fp32 = validate(ov_model, test_samples)
     #     metrics_dict["time_fp32"] = transcription_time_fp32
     #     metrics_dict["accuracy_fp32"] = accuracy_fp32
-    print(f"\nSize: {calibration_dataset_size}. Metrics: {metrics_dict}\n")
-    metrics_per_size.append(metrics_dict)
-
-    save_dir.mkdir(exist_ok=True, parents=True)
-    with open(save_dir / f"test-size{test_dataset_size}_decoder-only.json", "w") as f:
-        json.dump(metrics_per_size, f, indent=4)
+    # print(f"\nSize: {calibration_dataset_size}. Metrics: {metrics_dict}\n")
+    # metrics_per_size.append(metrics_dict)
+    #
+    # save_dir.mkdir(exist_ok=True, parents=True)
+    # with open(save_dir / f"test-size{test_dataset_size}_decoder-only.json", "w") as f:
+    #     json.dump(metrics_per_size, f, indent=4)
