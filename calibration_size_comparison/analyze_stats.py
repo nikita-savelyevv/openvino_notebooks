@@ -11,7 +11,7 @@ from calibration_size_comparison.plot import plot_from_data
 
 
 # stats_filepath_template = "../notebooks/267-distil-whisper-asr/ptq_stats/stats_size{}.pkl"
-stats_filepath_template = "../notebooks/267-distil-whisper-asr/ptq_stats_w-noop/stats_size{}.pkl"
+stats_filepath_template = "../notebooks/267-distil-whisper-asr/ptq_stats_w-noop_fp32/stats_size{}.pkl"
 
 
 def statistics_regression(xs, ys):
@@ -158,9 +158,10 @@ if __name__ == '__main__':
     _, xs, ys = plot_from_data(distil_whisper_small_decoder_only, "Dec", "accuracy")
     plt.cla()
 
-    xs, ys = xs[:4], ys[:4]
+    # xs, ys = xs[:4], ys[:4]
 
     # statistics_regression(xs, ys)
+
     target_node_name = '__module.model.model.decoder.layers.3.fc2/aten::linear/MatMul_820'
     # plot_statistics_distribution(xs, ys, target_node_name)
     # plot_statistics_per_size(xs, ys, target_node_name)

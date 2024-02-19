@@ -42,6 +42,8 @@ def convert_to_ov():
         ov_model = OVModelForSpeechSeq2Seq.from_pretrained(
             model_id, export=True, compile=False, ov_config=ov_config
         )
+        # print("Saving with FP32 weights")
+        print("Saving with FP16 weights")
         ov_model.half()
         # ov_model.generation_config = pt_distil_model.generation_config
         ov_model.save_pretrained(model_dir)
@@ -311,7 +313,7 @@ for i, calibration_dataset_size in enumerate(
     # [2]
 ):
     import nncf.quantization.algorithms.pipeline as pipeline_module
-    pipeline_module.write_stats_filepath = Path(f"ptq_stats_w-noop/stats_size{calibration_dataset_size}.pkl")
+    pipeline_module.write_stats_filepath = Path(f"ptq_stats_w-noop_fp32/stats_size{calibration_dataset_size}.pkl")
 
     quantized_ov_model = quantize(ov_model,
                                   calibration_dataset_size=calibration_dataset_size,
