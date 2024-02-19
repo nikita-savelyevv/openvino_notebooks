@@ -10,12 +10,15 @@ from sklearn.preprocessing import StandardScaler
 from calibration_size_comparison.plot import plot_from_data
 
 
+# stats_filepath_template = "../notebooks/267-distil-whisper-asr/ptq_stats/stats_size{}.pkl"
+stats_filepath_template = "../notebooks/267-distil-whisper-asr/ptq_stats_w-noop/stats_size{}.pkl"
+
 
 def statistics_regression(xs, ys):
     X = None
     legend = []
     for size, acc in zip(xs, ys):
-        with open(f"../notebooks/267-distil-whisper-asr/ptq_stats/stats_size{size}.pkl", "rb") as f:
+        with open(stats_filepath_template.format(size), "rb") as f:
             stats = pickle.load(f)
 
         x = []
@@ -92,7 +95,7 @@ def statistics_regression(xs, ys):
 
 def plot_statistics_distribution(xs, ys, target_node_name):
     for size, acc in zip(xs, ys):
-        with open(f"../notebooks/267-distil-whisper-asr/ptq_stats/stats_size{size}.pkl", "rb") as f:
+        with open(stats_filepath_template.format(size), "rb") as f:
             stats = pickle.load(f)
 
         for k, stat_dict in stats[target_node_name].items():
@@ -111,21 +114,41 @@ def plot_statistics_distribution(xs, ys, target_node_name):
 def plot_statistics_per_size(xs, ys, target_node_name):
     min_mean = []
     max_mean = []
+    value_mean = []
     for size, acc in zip(xs, ys):
-        with open(f"../notebooks/267-distil-whisper-asr/ptq_stats/stats_size{size}.pkl", "rb") as f:
+        with open(stats_filepath_template.format(size), "rb") as f:
             stats = pickle.load(f)
 
         for k, stat_dict in stats[target_node_name].items():
             if k == 'MMQ':
-                min_mean.append(stat_dict["min_values"].mean())
-                max_mean.append(stat_dict["max_values"].mean())
+                # min_mean.append(stat_dict["min_values"].mean())
+                # max_mean.append(stat_dict["max_values"].mean())
+                value_mean.append(stat_dict["no_op"][0].mean())
 
-    plt.plot(xs, min_mean, label='min_values mean')
-    plt.plot(xs, max_mean, label='max_values mean')
+    # plt.plot(xs, min_mean, label='min_values mean')
+    # plt.plot(xs, max_mean, label='max_values mean')
+    plt.plot(xs, value_mean, label='weight mean')
     plt.title(target_node_name)
     plt.grid(True)
     plt.legend()
     plt.show()
+
+
+def plot_statistics_diff_matrix(xs, ys, target_node_name):
+    diffs = []
+    for size1, _ in zip(xs, ys):
+        diffs.append([])
+        with open(stats_filepath_template.format(size1), "rb") as f:
+            stats1 = pickle.load(f)
+        x1 = stats1[target_node_name]['MMQ']['no_op'][0]
+        for size2, _ in zip(xs, ys):
+            with open(stats_filepath_template.format(size2), "rb") as f:
+                stats2 = pickle.load(f)
+            x2 = stats2[target_node_name]['MMQ']['no_op'][0]
+            diffs[-1].append(f"{np.abs(x2 - x1).mean():.6f}")
+
+    for row in diffs:
+        print(row)
 
 
 if __name__ == '__main__':
@@ -135,7 +158,10 @@ if __name__ == '__main__':
     _, xs, ys = plot_from_data(distil_whisper_small_decoder_only, "Dec", "accuracy")
     plt.cla()
 
+    xs, ys = xs[:4], ys[:4]
+
     # statistics_regression(xs, ys)
     target_node_name = '__module.model.model.decoder.layers.3.fc2/aten::linear/MatMul_820'
     # plot_statistics_distribution(xs, ys, target_node_name)
-    plot_statistics_per_size(xs, ys, target_node_name)
+    # plot_statistics_per_size(xs, ys, target_node_name)
+    plot_statistics_diff_matrix(xs, ys, target_node_name)
