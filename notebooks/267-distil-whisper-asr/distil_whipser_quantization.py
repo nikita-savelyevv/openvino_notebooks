@@ -186,9 +186,10 @@ def quantize(ov_model, calibration_dataset_size, encoder_sq_alpha, decoder_sq_al
             model_type=nncf.ModelType.TRANSFORMER,
             advanced_parameters=nncf.AdvancedQuantizationParameters(
                 smooth_quant_alpha=decoder_sq_alpha,
+                disable_bias_correction=False,
                 # activations_range_estimator_params=RangeEstimatorParameters(
-                #     min=StatisticsCollectorParameters(statistics_type=StatisticsType.MIN, aggregator_type=AggregatorType.MEDIAN),
-                #     max=StatisticsCollectorParameters(statistics_type=StatisticsType.MAX, aggregator_type=AggregatorType.MEDIAN),
+                #     min=StatisticsCollectorParameters(statistics_type=StatisticsType.MIN, aggregator_type=AggregatorType.MIN),
+                #     max=StatisticsCollectorParameters(statistics_type=StatisticsType.MAX, aggregator_type=AggregatorType.MAX),
                 # )
             )
         )
@@ -307,10 +308,10 @@ metrics_per_size = []
 for i, calibration_dataset_size in enumerate(
         list(range(1, 100, 1)) +
         list(range(100, 1000 + 1, 50))
-    # [1]
+    # [2]
 ):
     import nncf.quantization.algorithms.pipeline as pipeline_module
-    pipeline_module.write_stats_filepath = Path(f"ptq_stats/stats_size{calibration_dataset_size}.pkl")
+    pipeline_module.write_stats_filepath = Path(f"ptq_stats_w-noop/stats_size{calibration_dataset_size}.pkl")
 
     quantized_ov_model = quantize(ov_model,
                                   calibration_dataset_size=calibration_dataset_size,
@@ -341,5 +342,5 @@ for i, calibration_dataset_size in enumerate(
     # metrics_per_size.append(metrics_dict)
     #
     # save_dir.mkdir(exist_ok=True, parents=True)
-    # with open(save_dir / f"test-size{test_dataset_size}_decoder-only.json", "w") as f:
+    # with open(save_dir / f"test-size{test_dataset_size}_decoder-only_min-min_max-max.json", "w") as f:
     #     json.dump(metrics_per_size, f, indent=4)
