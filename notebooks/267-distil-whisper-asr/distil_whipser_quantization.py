@@ -178,6 +178,12 @@ def quantize(ov_model, calibration_dataset_size, encoder_sq_alpha, decoder_sq_al
         # )
         ov.save_model(ov_model.encoder.model, save_dir / "openvino_encoder_model.xml")
 
+        import pickle
+        # with open('calib1.pkl', 'wb') as f:
+        #     pickle.dump(decoder_calibration_data, f)
+        # with open('calib1.pkl', 'rb') as f:
+        #     decoder_calibration_data = pickle.load(f)
+        # decoder_calibration_data = decoder_calibration_data[:10]
         print("Quantizing decoder with past")
         quantized_decoder_with_past = nncf.quantize(
             ov_model.decoder_with_past.model,
@@ -187,7 +193,8 @@ def quantize(ov_model, calibration_dataset_size, encoder_sq_alpha, decoder_sq_al
             fast_bias_correction=True,
             model_type=nncf.ModelType.TRANSFORMER,
             advanced_parameters=nncf.AdvancedQuantizationParameters(
-                smooth_quant_alpha=decoder_sq_alpha,
+                # smooth_quant_alpha=decoder_sq_alpha,
+                smooth_quant_alpha=-1,
                 disable_bias_correction=False,
                 # activations_range_estimator_params=RangeEstimatorParameters(
                 #     min=StatisticsCollectorParameters(statistics_type=StatisticsType.MIN, aggregator_type=AggregatorType.MIN),
@@ -313,7 +320,7 @@ for i, calibration_dataset_size in enumerate(
     # [2]
 ):
     import nncf.quantization.algorithms.pipeline as pipeline_module
-    pipeline_module.write_stats_filepath = Path(f"ptq_stats_w-noop_fp32/stats_size{calibration_dataset_size}.pkl")
+    pipeline_module.write_stats_filepath = Path(f"ptq_stats_no-sq/stats_size{calibration_dataset_size}.pkl")
 
     quantized_ov_model = quantize(ov_model,
                                   calibration_dataset_size=calibration_dataset_size,
@@ -330,19 +337,19 @@ for i, calibration_dataset_size in enumerate(
     # predict(ov_model, n_samples=n_samples, print_predictions=bool(0))
     # predict(quantized_ov_model, n_samples=n_samples, print_predictions=bool(0))
 
-    # transcription_time_int8, accuracy_int8 = validate(quantized_ov_model, test_samples)
-    # metrics_dict = {
-    #     "calibration_dataset_size": calibration_dataset_size,
-    #     "time_int8": transcription_time_int8,
-    #     "accuracy_int8": accuracy_int8
-    # }
-    # if i == 0:
-    #     transcription_time_fp32, accuracy_fp32 = validate(ov_model, test_samples)
-    #     metrics_dict["time_fp32"] = transcription_time_fp32
-    #     metrics_dict["accuracy_fp32"] = accuracy_fp32
-    # print(f"\nSize: {calibration_dataset_size}. Metrics: {metrics_dict}\n")
-    # metrics_per_size.append(metrics_dict)
-    #
-    # save_dir.mkdir(exist_ok=True, parents=True)
-    # with open(save_dir / f"test-size{test_dataset_size}_decoder-only_min-min_max-max.json", "w") as f:
-    #     json.dump(metrics_per_size, f, indent=4)
+    transcription_time_int8, accuracy_int8 = validate(quantized_ov_model, test_samples)
+    metrics_dict = {
+        "calibration_dataset_size": calibration_dataset_size,
+        "time_int8": transcription_time_int8,
+        "accuracy_int8": accuracy_int8
+    }
+    if i == 0:
+        transcription_time_fp32, accuracy_fp32 = validate(ov_model, test_samples)
+        metrics_dict["time_fp32"] = transcription_time_fp32
+        metrics_dict["accuracy_fp32"] = accuracy_fp32
+    print(f"\nSize: {calibration_dataset_size}. Metrics: {metrics_dict}\n")
+    metrics_per_size.append(metrics_dict)
+
+    save_dir.mkdir(exist_ok=True, parents=True)
+    with open(save_dir / f"test-size{test_dataset_size}_decoder-only_no-sq.json", "w") as f:
+        json.dump(metrics_per_size, f, indent=4)
