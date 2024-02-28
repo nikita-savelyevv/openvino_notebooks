@@ -1,0 +1,379 @@
+[
+    {
+        "calibration_dataset_size": 1,
+        "time_int8": 1.6718994900000002,
+        "accuracy_int8": 81.41225337487019,
+        "time_fp32": 1.7225145600000002,
+        "accuracy_fp32": 82.2429906542056
+    },
+    {
+        "calibration_dataset_size": 2,
+        "time_int8": 1.63965873,
+        "accuracy_int8": 82.2429906542056
+    },
+    {
+        "calibration_dataset_size": 3,
+        "time_int8": 1.63832763,
+        "accuracy_int8": 82.9698857736241
+    },
+    {
+        "calibration_dataset_size": 4,
+        "time_int8": 1.6446370200000002,
+        "accuracy_int8": 82.2429906542056
+    },
+    {
+        "calibration_dataset_size": 5,
+        "time_int8": 1.6410522400000003,
+        "accuracy_int8": 82.13914849428868
+    },
+    {
+        "calibration_dataset_size": 6,
+        "time_int8": 1.64257892,
+        "accuracy_int8": 82.2429906542056
+    },
+    {
+        "calibration_dataset_size": 7,
+        "time_int8": 1.6366207399999997,
+        "accuracy_int8": 82.34683281412254
+    },
+    {
+        "calibration_dataset_size": 8,
+        "time_int8": 1.6624355800000001,
+        "accuracy_int8": 81.82762201453791
+    },
+    {
+        "calibration_dataset_size": 9,
+        "time_int8": 1.64016587,
+        "accuracy_int8": 81.82762201453791
+    },
+    {
+        "calibration_dataset_size": 10,
+        "time_int8": 1.6609439400000001,
+        "accuracy_int8": 82.55451713395638
+    },
+    {
+        "calibration_dataset_size": 11,
+        "time_int8": 1.6393696699999998,
+        "accuracy_int8": 82.2429906542056
+    },
+    {
+        "calibration_dataset_size": 12,
+        "time_int8": 1.64259359,
+        "accuracy_int8": 82.13914849428868
+    },
+    {
+        "calibration_dataset_size": 13,
+        "time_int8": 1.6683013599999998,
+        "accuracy_int8": 81.93146417445483
+    },
+    {
+        "calibration_dataset_size": 14,
+        "time_int8": 1.7230586899999998,
+        "accuracy_int8": 82.34683281412254
+    },
+    {
+        "calibration_dataset_size": 15,
+        "time_int8": 3.5324707900000005,
+        "accuracy_int8": 82.03530633437175
+    },
+    {
+        "calibration_dataset_size": 16,
+        "time_int8": 3.2823402699999997,
+        "accuracy_int8": 82.34683281412254
+    },
+    {
+        "calibration_dataset_size": 17,
+        "time_int8": 3.4028901399999993,
+        "accuracy_int8": 82.2429906542056
+    },
+    {
+        "calibration_dataset_size": 18,
+        "time_int8": 3.3658317700000002,
+        "accuracy_int8": 82.34683281412254
+    },
+    {
+        "calibration_dataset_size": 19,
+        "time_int8": 3.5144606900000004,
+        "accuracy_int8": 82.13914849428868
+    },
+    {
+        "calibration_dataset_size": 20,
+        "time_int8": 3.5374665600000004,
+        "accuracy_int8": 82.6583592938733
+    },
+    {
+        "calibration_dataset_size": 21,
+        "time_int8": 3.6170032000000005,
+        "accuracy_int8": 82.34683281412254
+    },
+    {
+        "calibration_dataset_size": 22,
+        "time_int8": 3.0050156899999996,
+        "accuracy_int8": 82.76220145379024
+    },
+    {
+        "calibration_dataset_size": 23,
+        "time_int8": 2.80585926,
+        "accuracy_int8": 82.34683281412254
+    },
+    {
+        "calibration_dataset_size": 24,
+        "time_int8": 2.78794707,
+        "accuracy_int8": 82.03530633437175
+    },
+    {
+        "calibration_dataset_size": 25,
+        "time_int8": 2.91315151,
+        "accuracy_int8": 82.34683281412254
+    },
+    {
+        "calibration_dataset_size": 26,
+        "time_int8": 2.98222757,
+        "accuracy_int8": 82.45067497403946
+    },
+    {
+        "calibration_dataset_size": 27,
+        "time_int8": 2.9017828599999995,
+        "accuracy_int8": 82.55451713395638
+    },
+    {
+        "calibration_dataset_size": 28,
+        "time_int8": 2.79594939,
+        "accuracy_int8": 82.2429906542056
+    },
+    {
+        "calibration_dataset_size": 29,
+        "time_int8": 2.8634998199999995,
+        "accuracy_int8": 82.34683281412254
+    },
+    {
+        "calibration_dataset_size": 30,
+        "time_int8": 2.97300393,
+        "accuracy_int8": 82.86604361370716
+    },
+    {
+        "calibration_dataset_size": 31,
+        "time_int8": 3.0147428200000004,
+        "accuracy_int8": 82.45067497403946
+    },
+    {
+        "calibration_dataset_size": 32,
+        "time_int8": 2.8417310000000002,
+        "accuracy_int8": 82.6583592938733
+    },
+    {
+        "calibration_dataset_size": 33,
+        "time_int8": 2.854942389999999,
+        "accuracy_int8": 82.2429906542056
+    },
+    {
+        "calibration_dataset_size": 34,
+        "time_int8": 2.79731414,
+        "accuracy_int8": 82.34683281412254
+    },
+    {
+        "calibration_dataset_size": 35,
+        "time_int8": 1.6428581899999994,
+        "accuracy_int8": 82.55451713395638
+    },
+    {
+        "calibration_dataset_size": 36,
+        "time_int8": 1.6354076399999997,
+        "accuracy_int8": 82.2429906542056
+    },
+    {
+        "calibration_dataset_size": 37,
+        "time_int8": 1.64923639,
+        "accuracy_int8": 82.86604361370716
+    },
+    {
+        "calibration_dataset_size": 38,
+        "time_int8": 1.6375642000000001,
+        "accuracy_int8": 82.34683281412254
+    },
+    {
+        "calibration_dataset_size": 39,
+        "time_int8": 1.64381518,
+        "accuracy_int8": 82.2429906542056
+    },
+    {
+        "calibration_dataset_size": 40,
+        "time_int8": 1.64579797,
+        "accuracy_int8": 82.2429906542056
+    },
+    {
+        "calibration_dataset_size": 41,
+        "time_int8": 1.6377595400000002,
+        "accuracy_int8": 82.13914849428868
+    },
+    {
+        "calibration_dataset_size": 42,
+        "time_int8": 1.6450975800000003,
+        "accuracy_int8": 82.34683281412254
+    },
+    {
+        "calibration_dataset_size": 43,
+        "time_int8": 1.6409995599999996,
+        "accuracy_int8": 82.76220145379024
+    },
+    {
+        "calibration_dataset_size": 44,
+        "time_int8": 1.6479753799999997,
+        "accuracy_int8": 82.13914849428868
+    },
+    {
+        "calibration_dataset_size": 45,
+        "time_int8": 1.6415312299999996,
+        "accuracy_int8": 82.34683281412254
+    },
+    {
+        "calibration_dataset_size": 46,
+        "time_int8": 1.6391131300000001,
+        "accuracy_int8": 82.2429906542056
+    },
+    {
+        "calibration_dataset_size": 47,
+        "time_int8": 1.64053763,
+        "accuracy_int8": 82.13914849428868
+    },
+    {
+        "calibration_dataset_size": 48,
+        "time_int8": 1.6409785499999998,
+        "accuracy_int8": 82.34683281412254
+    },
+    {
+        "calibration_dataset_size": 49,
+        "time_int8": 1.64800213,
+        "accuracy_int8": 82.2429906542056
+    },
+    {
+        "calibration_dataset_size": 50,
+        "time_int8": 1.6485585300000003,
+        "accuracy_int8": 82.2429906542056
+    },
+    {
+        "calibration_dataset_size": 51,
+        "time_int8": 1.6434508700000001,
+        "accuracy_int8": 82.13914849428868
+    },
+    {
+        "calibration_dataset_size": 52,
+        "time_int8": 1.6411333,
+        "accuracy_int8": 82.34683281412254
+    },
+    {
+        "calibration_dataset_size": 53,
+        "time_int8": 1.6543623500000002,
+        "accuracy_int8": 82.34683281412254
+    },
+    {
+        "calibration_dataset_size": 54,
+        "time_int8": 1.64660728,
+        "accuracy_int8": 82.13914849428868
+    },
+    {
+        "calibration_dataset_size": 55,
+        "time_int8": 1.65380095,
+        "accuracy_int8": 82.2429906542056
+    },
+    {
+        "calibration_dataset_size": 56,
+        "time_int8": 1.65443068,
+        "accuracy_int8": 82.13914849428868
+    },
+    {
+        "calibration_dataset_size": 57,
+        "time_int8": 1.6418595900000001,
+        "accuracy_int8": 82.34683281412254
+    },
+    {
+        "calibration_dataset_size": 58,
+        "time_int8": 1.6381269100000002,
+        "accuracy_int8": 82.13914849428868
+    },
+    {
+        "calibration_dataset_size": 59,
+        "time_int8": 1.6458485299999999,
+        "accuracy_int8": 82.45067497403946
+    },
+    {
+        "calibration_dataset_size": 60,
+        "time_int8": 1.64202768,
+        "accuracy_int8": 82.45067497403946
+    },
+    {
+        "calibration_dataset_size": 61,
+        "time_int8": 1.64443314,
+        "accuracy_int8": 82.13914849428868
+    },
+    {
+        "calibration_dataset_size": 62,
+        "time_int8": 1.64206821,
+        "accuracy_int8": 82.45067497403946
+    },
+    {
+        "calibration_dataset_size": 63,
+        "time_int8": 1.64570896,
+        "accuracy_int8": 82.34683281412254
+    },
+    {
+        "calibration_dataset_size": 64,
+        "time_int8": 1.6452936300000003,
+        "accuracy_int8": 82.55451713395638
+    },
+    {
+        "calibration_dataset_size": 65,
+        "time_int8": 1.64443669,
+        "accuracy_int8": 82.13914849428868
+    },
+    {
+        "calibration_dataset_size": 66,
+        "time_int8": 1.6423457299999995,
+        "accuracy_int8": 82.03530633437175
+    },
+    {
+        "calibration_dataset_size": 67,
+        "time_int8": 1.6501386399999998,
+        "accuracy_int8": 82.13914849428868
+    },
+    {
+        "calibration_dataset_size": 68,
+        "time_int8": 1.6456899999999999,
+        "accuracy_int8": 82.55451713395638
+    },
+    {
+        "calibration_dataset_size": 69,
+        "time_int8": 1.6452245300000001,
+        "accuracy_int8": 81.93146417445483
+    },
+    {
+        "calibration_dataset_size": 70,
+        "time_int8": 1.6413143499999996,
+        "accuracy_int8": 82.45067497403946
+    },
+    {
+        "calibration_dataset_size": 71,
+        "time_int8": 1.64621476,
+        "accuracy_int8": 82.76220145379024
+    },
+    {
+        "calibration_dataset_size": 72,
+        "time_int8": 1.6455852999999996,
+        "accuracy_int8": 82.2429906542056
+    },
+    {
+        "calibration_dataset_size": 73,
+        "time_int8": 1.6491542599999998,
+        "accuracy_int8": 82.34683281412254
+    },
+    {
+        "calibration_dataset_size": 74,
+        "time_int8": 1.6595689200000001,
+        "accuracy_int8": 82.03530633437175
+    },
+    {
+        "calibration_dataset_size": 75,
+        "time_int8": 1.66086949,
+        "accuracy_int8": 82.03530633437175
+    }
+]

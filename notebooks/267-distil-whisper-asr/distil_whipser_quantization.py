@@ -15,6 +15,7 @@ from nncf.quantization.range_estimator import RangeEstimatorParameters, Statisti
     AggregatorType
 from openvino import Tensor
 from optimum.intel.openvino import OVModelForSpeechSeq2Seq
+from optimum.intel.openvino.quantization import InferRequestWrapper
 from scipy.io import wavfile
 from tqdm import tqdm
 from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
@@ -28,8 +29,8 @@ core = ov.Core()
 
 device = "CPU"
 
-# model_size_id = "large-v2"
-model_size_id = "small.en"
+model_size_id = "large-v2"
+# model_size_id = "small.en"
 model_id = f"distil-whisper/distil-{model_size_id}"
 model_dir = Path(model_id.split("/")[-1])
 quantized_model_dir = model_dir / "quantized"
@@ -52,44 +53,10 @@ def convert_to_ov():
     return ov_model
 
 
-class InferRequestWrapper:
-    def __init__(self, request, data_cache):
-        self.request = request
-        self.data_cache = data_cache
-
-    def __call__(self, *args, **kwargs):
-        self.data_cache.append(*args)
-        return self.request(*args, **kwargs)
-
-    def infer(self, inputs: Any = None, share_inputs: bool = False):
-        self.data_cache.append(inputs)
-        return self.request.infer(inputs, share_inputs)
-
-    def start_async(
-            self,
-            inputs: Any = None,
-            userdata: Any = None,
-            share_inputs: bool = False,
-    ):
-        self.data_cache.append(inputs)
-        self.request.infer(inputs, share_inputs)
-
-    def wait(self):
-        pass
-
-    def get_tensor(self, name: str):
-        return Tensor(self.request.results[name])
-
-    def __getattr__(self, attr):
-        if attr in self.__dict__:
-            return getattr(self, attr)
-        return getattr(self.request, attr)
-
-
 def extract_input_features(sample=None, audio_array=None):
     if audio_array is None:
         audio_array = sample["audio"]["array"]
-        audio_array = resample(audio_array, sample["audio"]["sampling_rate"], 16000)
+    audio_array = resample(audio_array, sample["audio"]["sampling_rate"], 16000)
     input_features = processor(
         audio_array,
         sampling_rate=16000,
@@ -166,24 +133,22 @@ def quantize(ov_model, calibration_dataset_size, encoder_sq_alpha, decoder_sq_al
     if not save_dir.exists():
         encoder_calibration_data, decoder_calibration_data = collect_calibration_dataset(ov_model,
                                                                                          calibration_dataset_size)
-        # print("Quantizing encoder")
-        # quantized_encoder = nncf.quantize(
-        #     ov_model.encoder.model,
-        #     nncf.Dataset(encoder_calibration_data),
-        #     preset=nncf.QuantizationPreset.MIXED,
-        #     subset_size=len(encoder_calibration_data),
-        #     fast_bias_correction=True,
-        #     model_type=nncf.ModelType.TRANSFORMER,
-        #     advanced_parameters=nncf.AdvancedQuantizationParameters(smooth_quant_alpha=encoder_sq_alpha)
-        # )
-        ov.save_model(ov_model.encoder.model, save_dir / "openvino_encoder_model.xml")
+        # return
+        print("Quantizing encoder")
+        quantized_encoder = nncf.quantize(
+            ov_model.encoder.model,
+            nncf.Dataset(encoder_calibration_data),
+            preset=nncf.QuantizationPreset.MIXED,
+            subset_size=len(encoder_calibration_data),
+            fast_bias_correction=True,
+            model_type=nncf.ModelType.TRANSFORMER,
+            advanced_parameters=nncf.AdvancedQuantizationParameters(
+                smooth_quant_alpha=encoder_sq_alpha,
+            )
+        )
+        ov.save_model(quantized_encoder, save_dir / "openvino_encoder_model.xml")
+        # ov.save_model(ov_model.encoder.model, save_dir / "openvino_encoder_model.xml")
 
-        import pickle
-        # with open('calib1.pkl', 'wb') as f:
-        #     pickle.dump(decoder_calibration_data, f)
-        # with open('calib1.pkl', 'rb') as f:
-        #     decoder_calibration_data = pickle.load(f)
-        # decoder_calibration_data = decoder_calibration_data[:10]
         print("Quantizing decoder with past")
         quantized_decoder_with_past = nncf.quantize(
             ov_model.decoder_with_past.model,
@@ -193,8 +158,8 @@ def quantize(ov_model, calibration_dataset_size, encoder_sq_alpha, decoder_sq_al
             fast_bias_correction=True,
             model_type=nncf.ModelType.TRANSFORMER,
             advanced_parameters=nncf.AdvancedQuantizationParameters(
-                # smooth_quant_alpha=decoder_sq_alpha,
-                smooth_quant_alpha=-1,
+                smooth_quant_alpha=decoder_sq_alpha,
+                # smooth_quant_alpha=-1,
                 disable_bias_correction=False,
                 # activations_range_estimator_params=RangeEstimatorParameters(
                 #     min=StatisticsCollectorParameters(statistics_type=StatisticsType.MIN, aggregator_type=AggregatorType.MIN),
@@ -203,6 +168,7 @@ def quantize(ov_model, calibration_dataset_size, encoder_sq_alpha, decoder_sq_al
             )
         )
         ov.save_model(quantized_decoder_with_past, save_dir / "openvino_decoder_with_past_model.xml")
+        # ov.save_model(ov_model.decoder_with_past.model, save_dir / "openvino_decoder_with_past_model.xml")
 
         shutil.copy(model_dir / "config.json", save_dir / "config.json")
         shutil.copy(model_dir / "openvino_decoder_model.xml", save_dir / "openvino_decoder_model.xml")
@@ -269,7 +235,7 @@ def validate(ov_model, test_samples):
         # print()
         # print(data_item["text"])
         # print(transcription[0])
-        ground_truths.append(data_item.get("text", data_item["sentence"]))
+        ground_truths.append(data_item.get("text", data_item.get("sentence")))
         predictions.append(transcription[0])
         inference_time.append(delta_time)
 
@@ -305,28 +271,35 @@ ov_model.compile()
 # print(transcription)
 
 test_dataset_size = 1000
-dataset_label = "mozilla-foundation/common_voice_13_0"
-test_dataset = load_dataset(dataset_label, "en", split="test")
+# dataset_label = "mozilla-foundation/common_voice_13_0"
+# test_dataset = load_dataset(dataset_label, "en", split="test")
+dataset_label = "librispeech_asr"
+test_dataset = load_dataset(dataset_label, "clean", split="test")
+
 test_dataset = test_dataset.shuffle(seed=42)
 sliced_test_dataset = islice(test_dataset, test_dataset_size) if test_dataset_size != -1 else test_dataset
 test_samples = [sample for sample in sliced_test_dataset]
 
 
-save_dir = Path("metrics") / model_size_id / dataset_label.split('/')[1]
+# save_dir = Path("metrics") / model_size_id / dataset_label.split('/')[1]
+save_dir = Path("metrics") / model_size_id / dataset_label
 metrics_per_size = []
 for i, calibration_dataset_size in enumerate(
-        list(range(1, 100, 1)) +
+        list(range(1, 100, 2)) +
         list(range(100, 1000 + 1, 50))
     # [2]
 ):
-    import nncf.quantization.algorithms.pipeline as pipeline_module
-    pipeline_module.write_stats_filepath = Path(f"ptq_stats_no-sq/stats_size{calibration_dataset_size}.pkl")
+    # import nncf.quantization.algorithms.pipeline as pipeline_module
+    # pipeline_module.write_stats_filepath = Path(f"stats/small.en/decoder-only-sq-fix/stats_size{calibration_dataset_size}.pkl")
 
     quantized_ov_model = quantize(ov_model,
                                   calibration_dataset_size=calibration_dataset_size,
-                                  encoder_sq_alpha=0.50,
-                                  decoder_sq_alpha=0.95,
+                                  # encoder_sq_alpha=0.50,
+                                  encoder_sq_alpha=-1,
+                                  # decoder_sq_alpha=0.95,
+                                  decoder_sq_alpha=-1,
                                   cleanup_model=True)
+    # continue
 
     # audio = read_audio(Path("downloaded_video.wav"))
     # predicted_ids = quantized_ov_model.generate(extract_input_features(audio_array=audio))
@@ -351,5 +324,5 @@ for i, calibration_dataset_size in enumerate(
     metrics_per_size.append(metrics_dict)
 
     save_dir.mkdir(exist_ok=True, parents=True)
-    with open(save_dir / f"test-size{test_dataset_size}_decoder-only_no-sq.json", "w") as f:
+    with open(save_dir / f"test-size{test_dataset_size}_no_sq.json", "w") as f:
         json.dump(metrics_per_size, f, indent=4)

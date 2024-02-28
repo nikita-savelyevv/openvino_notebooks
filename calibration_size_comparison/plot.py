@@ -26,11 +26,28 @@ def plot_distil_whisper():
               "r") as f:
         distil_whisper_with_shuffle_full_test = json.load(f)
     with open("../notebooks/267-distil-whisper-asr/metrics/large-v2/test-size1000.json", "r") as f:
-        distil_whisper_large = json.load(f)
+        distil_whisper_large_old = json.load(f)
     with open("../notebooks/267-distil-whisper-asr/metrics/small.en/common_voice_13_0/test-size1000_decoder-only.json", "r") as f:
         distil_whisper_small_decoder_only = json.load(f)
     with open("../notebooks/267-distil-whisper-asr/metrics/small.en/common_voice_13_0/test-size1000_decoder-only_no-sq.json", "r") as f:
         distil_whisper_small_decoder_only_no_sq = json.load(f)
+
+    with open("../notebooks/267-distil-whisper-asr/metrics/large-v2/common_voice_13_0/test-size100_decoder-only_no-sq.json", "r") as f:
+        distil_whisper_large_decoder_only_no_sq = json.load(f)
+    with open("../notebooks/267-distil-whisper-asr/metrics/large-v2/common_voice_13_0/test-size1000_decoder-only_no-sq.json", "r") as f:
+        distil_whisper_large_decoder_only_no_sq_1000 = json.load(f)
+    with open("../notebooks/267-distil-whisper-asr/metrics/large-v2/common_voice_13_0/test-size100_decoder-only_sq-0.95.json", "r") as f:
+        distil_whisper_large_decoder_only = json.load(f)
+
+    with open("../notebooks/267-distil-whisper-asr/metrics/large-v2/common_voice_13_0/test-size100_encoder-only_no-sq.json", "r") as f:
+        distil_whisper_large_encoder_only_no_sq = json.load(f)
+    with open("../notebooks/267-distil-whisper-asr/metrics/large-v2/common_voice_13_0/test-size100_encoder-only_sq-0.5.json", "r") as f:
+        distil_whisper_large_encoder_only = json.load(f)
+
+    with open("../notebooks/267-distil-whisper-asr/metrics/large-v2/common_voice_13_0/test-size1000_sq.json", "r") as f:
+        distil_whisper_large = json.load(f)
+    with open("../notebooks/267-distil-whisper-asr/metrics/large-v2/common_voice_13_0/test-size1000_no-sq.json", "r") as f:
+        distil_whisper_large_no_sq = json.load(f)
 
     # fp32_acc, xs, _ = plot_from_data(distil_whisper_without_shuffle, "Without shuffle")
     # fp32_acc_1000, xs, _ = plot_from_data(distil_whisper_with_shuffle, "1000 samples", "accuracy")
@@ -41,11 +58,26 @@ def plot_distil_whisper():
     # fp32_acc_large, xs, _ = plot_from_data(distil_whisper_large, "1000 samples", "accuracy")
     # plt.hlines([fp32_acc_large], xmin=min(xs), xmax=max(xs), colors='r', label="Baseline")
 
-    fp32_acc_1000, xs, _ = plot_from_data(distil_whisper_small_decoder_only, "Dec", "accuracy")
-    plot_from_data(distil_whisper_small_decoder_only_no_sq, "Dec w/o SQ", "accuracy")
-    plt.hlines([fp32_acc_1000], xmin=min(xs), xmax=max(xs), colors='r', label="Baseline")
+    # fp32_acc, xs, _ = plot_from_data(distil_whisper_small_decoder_only, "Quantized Decoder", "accuracy")
+    # plot_from_data(distil_whisper_small_decoder_only_no_sq, "Quantized Decoder w/o SQ", "accuracy")
 
-    plt.ylabel("Accuracy on common_voice_13")
+    # fp32_acc, xs, _ = plot_from_data(distil_whisper_large_decoder_only, "Quantized Decoder", "accuracy")
+    # plot_from_data(distil_whisper_large_decoder_only_no_sq, "Quantized Decoder w/o SQ", "accuracy")
+
+    # fp32_acc, xs, _ = plot_from_data(distil_whisper_large_encoder_only, "Quantized Encoder", "accuracy")
+    # plot_from_data(distil_whisper_large_encoder_only_no_sq, "Quantized Encoder w/o SQ", "accuracy")
+
+    # fp32_acc_1000, xs, _ = plot_from_data(distil_whisper_large_decoder_only_no_sq_1000, "Quantized Decoder w/o SQ 1000", "accuracy")
+    # fp32_acc_100, _, _ = plot_from_data(distil_whisper_large_decoder_only_no_sq, "Quantized Decoder w/o SQ 100", "accuracy")
+    # plt.hlines([fp32_acc_1000], xmin=min(xs), xmax=max(xs), colors='r', label="Baseline")
+
+    fp32_acc1, xs, _ = plot_from_data(distil_whisper_large, "Quantized w. SQ", "accuracy")
+    fp32_acc, _, _ = plot_from_data(distil_whisper_large_no_sq, "Quantized w/o SQ", "accuracy")
+    print(fp32_acc, fp32_acc1)
+
+    plt.hlines([fp32_acc], xmin=min(xs), xmax=max(xs), colors='r', label="Baseline")
+
+    plt.ylabel("Accuracy on common_voice_13 (1000 samples)")
     plt.xlabel("Calibration dataset size")
     plt.title("Distil-Whisper large-v2")
     plt.tight_layout()
