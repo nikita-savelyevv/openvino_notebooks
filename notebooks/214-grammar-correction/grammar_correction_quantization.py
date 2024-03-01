@@ -56,8 +56,8 @@ decoder_with_past_total_time = 0
 
 total_corrected_tokens = 0
 
-model_id = "grammar-synthesis-small"
-# model_id = "flan-t5-large-grammar-synthesis"
+# model_id = "grammar-synthesis-small"
+model_id = "flan-t5-large-grammar-synthesis"
 grammar_corrector_model_id = f"pszemraj/{model_id}"
 grammar_corrector_dir = Path(model_id)
 

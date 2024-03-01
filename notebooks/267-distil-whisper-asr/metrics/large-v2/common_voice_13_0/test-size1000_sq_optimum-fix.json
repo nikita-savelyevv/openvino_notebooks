@@ -125,5 +125,15 @@
         "calibration_dataset_size": 49,
         "time_int8": 1.004406562,
         "accuracy_int8": 82.73236755842233
+    },
+    {
+        "calibration_dataset_size": 51,
+        "time_int8": 1.002456391,
+        "accuracy_int8": 82.5949032462726
+    },
+    {
+        "calibration_dataset_size": 53,
+        "time_int8": 0.993175535,
+        "accuracy_int8": 82.57375489055725
     }
 ]
