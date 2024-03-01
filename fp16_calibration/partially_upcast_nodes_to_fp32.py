@@ -17,14 +17,16 @@ OPERATION_TYPE_MAP = {
     "Softmax": opset.softmax,
     "MVN": opset.mvn,
     "Multiply": opset.multiply,
-    "Divide": opset.divide,
+    # "Divide": opset.divide,
     "Add": opset.add,
-    "Subtract": opset.subtract,
-    "Concat": opset.concat,
-    "Power": opset.power,
-    "Transpose": opset.transpose,
+    # "Subtract": opset.subtract,
+    # "Concat": opset.concat,
+    # "Power": opset.power,
+    # "Transpose": opset.transpose,
     "Broadcast": opset.broadcast,
-    "ShapeOf": opset.shape_of
+    # "ShapeOf": opset.shape_of,
+    "Reshape": opset.reshape,
+    "Select": opset.select
 }
 
 ORIGINAL_PRECISION_RT_INFO_NAME = "precise_0"
@@ -103,6 +105,7 @@ def partially_upcast_nodes_to_fp32(orig_model: Model, example_input: Union[List,
                                 nodes_to_track_names[i: i + batch_size]]
         # for node_info in nodes_to_track_batch:
         #     node_names_and_snrs.append((node_info.node.get_friendly_name(), 100500))
+        #     print(node_info.node.get_type_name(), node_info.node.get_friendly_name())
         # continue
 
         # Add outputs for non-constant inputs of tracked nodes
@@ -130,6 +133,7 @@ def partially_upcast_nodes_to_fp32(orig_model: Model, example_input: Union[List,
     if upcast_ratio != 0.0 and upcast_ratio != 1.0:
         node_names_and_snrs = sorted(node_names_and_snrs, key=lambda it: it[1])
         node_names, node_snrs = tuple(zip(*node_names_and_snrs))
+        node_names = list(node_names)
 
         n_nodes = len(node_names)
         nodes_to_upcast_cnt = int(np.ceil(n_nodes * upcast_ratio))
@@ -149,6 +153,22 @@ def partially_upcast_nodes_to_fp32(orig_model: Model, example_input: Union[List,
             print("Skipping algorithm because upcast ratio equals 1.0. Upcasting all nodes of the given type(s).")
         node_to_upcast_names = nodes_to_track_names
 
+    always_upcast_types = [
+        # 'MatMul',
+        # 'MVN',
+        'Multiply',
+        'Add',
+        'Softmax',
+        'Select',
+        'Reshape',
+        'Broadcast',
+    ]
+    for op in orig_model.get_ops():
+        if op.get_type_name() in always_upcast_types:
+            if verbose:
+                print(f"Adding node of special type {op.get_type_name()}: {op.get_friendly_name()}")
+            node_to_upcast_names.append(op.get_friendly_name())
+
     new_model = orig_model.clone()
     mark_nodes_to_upcast_to_fp32(new_model, node_to_upcast_names)
     return new_model
@@ -160,6 +180,7 @@ def get_nodes_to_track(model: Model, operation_types: List[str]) -> List:
         if op.get_type_name() in operation_types and \
                 all(map(lambda input: input.get_node().get_type_name() != "Result", op.output(0).get_target_inputs())):
             nodes_to_track.append(op.get_friendly_name())
+    # nodes_to_track = ["__module.model.gpt_neox.layers.1.attention/aten::view/Reshape_529"]
     return nodes_to_track
 
 
@@ -279,6 +300,16 @@ def infer_tracked_op(node_info: TrackedNodeInfo, device: str, precision: str) ->
             new_op = OPERATION_TYPE_MAP[node.get_type_name()](*inputs, **call_attributes)
 
         ov_model = ov.Model([new_op], parameters=parameters)
+
+        # print('!')
+        # from pathlib import Path
+        # save_dir = Path("submodels/Reshape_529")
+        # ov.save_model(ov_model, save_dir / "model.xml")
+        # (save_dir / "inputs").mkdir(parents=True, exist_ok=True)
+        # for i, x in enumerate(input_values):
+        #     np.save(save_dir / "inputs" / f"{i}.npy", x)
+        # exit(0)
+
         exec_net = ov.Core().compile_model(ov_model, device, config={"INFERENCE_PRECISION_HINT": precision})
         request = exec_net.create_infer_request()
         result = request.infer(input_values, share_inputs=True, share_outputs=True)

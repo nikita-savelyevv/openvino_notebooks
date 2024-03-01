@@ -65,12 +65,12 @@ if __name__ == '__main__':
 
     models_dir = Path("./models")
 
-    MODEL_ID = "red-pajama-3b-chat"
+    # MODEL_ID = "red-pajama-3b-chat"
     # MODEL_ID = "T5"
     # MODEL_ID = "tiny-sd-unet"
     # MODEL_ID = "tiny-sd-vae-encoder"
     # MODEL_ID = "codegen-2B-multi"
-    # MODEL_ID = "gpt-neox-20b"
+    MODEL_ID = "gpt-neox-20b"
     # MODEL_ID = "densenet121"
 
     if MODEL_ID in ["red-pajama-3b-chat", "tiny-sd-unet", "tiny-sd-vae-encoder", "T5", "densenet121"]:
@@ -106,8 +106,8 @@ if __name__ == '__main__':
                 "/home/devuser/nsavelye/workspace/openvino.genai/llm_bench/python/codegen-2B-multi/pytorch/dldt/FP32")
             example_prompt = "# this function implement Fourier transform for imput array X"
         elif MODEL_ID == "gpt-neox-20b":
-            model_dir = Path(
-                "/home/devuser/nsavelye/workspace/openvino.genai/llm_bench/python/gpt-neox-20b/fp16/pytorch/dldt/FP32")
+            model_dir = Path("/home/devuser/nsavelye/workspace/openvino.genai/llm_bench/python/gpt-neox-20b/"
+                             "fp16/pytorch/dldt/stateful/FP32")
             example_prompt = "Which lakes are near Munich?"
         else:
             raise Exception("Unknown model")
@@ -134,6 +134,16 @@ if __name__ == '__main__':
     #
     # Upcasting
     #
+
+    # model_dir = "/dev/data/nsavelye/workspace/openvino.genai/llm_bench/python/tiny-random-gpt2/pytorch/dldt/FP32"
+    # ov_model_for_causal_lm = OVModelForCausalLM.from_pretrained(
+    #     model_dir, device=device, ov_config=ov_config,
+    #     config=AutoConfig.from_pretrained(model_dir, trust_remote_code=True), trust_remote_code=True)
+    # tok = AutoTokenizer.from_pretrained(model_dir)
+    # for it in run_generate(ov_model_for_causal_lm, tok, "Hello"):
+    #     print(it)
+    # exit(0)
+    # model = ov_model_for_causal_lm.model
 
     SAVE_MODEL = bool(1)
 
@@ -165,26 +175,41 @@ if __name__ == '__main__':
 
     # shape_str = ""
     # for k, v in example_input.items():
-    #     file_path = f"ex_in/{k}.npy"
-    #     data = v if isinstance(v, np.ndarray) else v.data
-    #     np.save(file_path, data.astype(np.float32) if data.dtype == np.float16 else data)
-    #     shape_str += f"{k}:{file_path},"
-    #     # shape_str += f"{k}{list(v.shape)},".replace(' ', '')
+    #     # file_path = f"ex_in/{k}.npy"
+    #     # data = v if isinstance(v, np.ndarray) else v.data
+    #     # np.save(file_path, data.astype(np.float32) if data.dtype == np.float16 else data)
+    #     # shape_str += f"{k}:{file_path},"
+    #     shape_str += f"{k}{list(v.shape)},".replace(' ', '')
     # print(shape_str)
     # exit(0)
 
+    # print(model.inputs)
+    # ov.save_model(model, f"{model_dir}/../FP32_bf16inp/openvino_model.xml", compress_to_fp16=False)
+    # exit(0)
+
     # log_dir = Path("/home/guest/nsavelye/workspace/fp16_calibration/fp16_calibration/final_models/fp16_weights/red-pajama-3b-chat/baseline__")
-    for upcast_ratio in [0.10]:
+    for upcast_ratio in [0.5, 0.6, 0.7, 0.8, 0.9, 1.0]:
         # memory_logger = MemoryLogger(log_dir).start_logging()
         # upcasted_model = model_upcast_utils.partially_upcast_nodes_to_fp32(model, example_input)
         upcasted_model = partially_upcast_nodes_to_fp32.partially_upcast_nodes_to_fp32(
             model, example_input, batch_size=batch_size, verbose=True, half_type=half_type, upcast_ratio=upcast_ratio,
-            operation_types=["MatMul"])
+            operation_types=[
+                "MatMul",
+                "Convolution",
+                'MVN',
+                # 'Multiply',
+                # 'Add',
+                # 'Softmax',
+                # 'Select',
+                # 'Reshape',
+                # 'Broadcast',
+            ])
             # operation_types=list(OPERATION_TYPE_MAP.keys()))
         # memory_logger.stop_logging()
 
         if SAVE_MODEL:
-            calibrated_model_dir = Path(f"{model_dir}_calibrated_{upcast_ratio:.2f}")
+            # calibrated_model_dir = Path(f"{model_dir}_calibrated_{upcast_ratio:.2f}_new_types")
+            calibrated_model_dir = Path(f"{model_dir}/../calibration_with_special_types/matmul-mvn/calibrated_{upcast_ratio:.2f}")
             # calibrated_model_dir = log_dir
             if MODEL_ID in ["red-pajama-3b-chat", "codegen-2B-multi", "gpt-neox-20b"]:
                 ov.save_model(upcasted_model, calibrated_model_dir / "openvino_model.xml",
