@@ -1,3 +1,4 @@
+import importlib
 import io
 import shutil
 from contextlib import contextmanager
@@ -24,7 +25,7 @@ from jiwer import wer, wer_standardize
 
 import nncf
 
-ov_config = {"CACHE_DIR": ""}
+ov_config = {"CACHE_DIR": "", "INFERENCE_PRECISION_HINT": "f32"}
 core = ov.Core()
 
 device = "CPU"
@@ -134,6 +135,7 @@ def quantize(ov_model, calibration_dataset_size, encoder_sq_alpha, decoder_sq_al
         encoder_calibration_data, decoder_calibration_data = collect_calibration_dataset(ov_model,
                                                                                          calibration_dataset_size)
         # return
+        importlib.reload(nncf)
         print("Quantizing encoder")
         quantized_encoder = nncf.quantize(
             ov_model.encoder.model,
@@ -271,21 +273,21 @@ ov_model.compile()
 # print(transcription)
 
 test_dataset_size = 1000
-# dataset_label = "mozilla-foundation/common_voice_13_0"
-# test_dataset = load_dataset(dataset_label, "en", split="test")
-dataset_label = "librispeech_asr"
-test_dataset = load_dataset(dataset_label, "clean", split="test")
+dataset_label = "mozilla-foundation/common_voice_13_0"
+test_dataset = load_dataset(dataset_label, "en", split="test")
+# dataset_label = "librispeech_asr"
+# test_dataset = load_dataset(dataset_label, "clean", split="test")
 
 test_dataset = test_dataset.shuffle(seed=42)
 sliced_test_dataset = islice(test_dataset, test_dataset_size) if test_dataset_size != -1 else test_dataset
 test_samples = [sample for sample in sliced_test_dataset]
 
 
-# save_dir = Path("metrics") / model_size_id / dataset_label.split('/')[1]
-save_dir = Path("metrics") / model_size_id / dataset_label
+save_dir = Path("metrics") / model_size_id / dataset_label.split('/')[1]
+# save_dir = Path("metrics") / model_size_id / dataset_label
 metrics_per_size = []
 for i, calibration_dataset_size in enumerate(
-        list(range(1, 100, 2)) +
+        list(range(39, 100, 2)) +
         list(range(100, 1000 + 1, 50))
     # [2]
 ):
@@ -294,10 +296,10 @@ for i, calibration_dataset_size in enumerate(
 
     quantized_ov_model = quantize(ov_model,
                                   calibration_dataset_size=calibration_dataset_size,
-                                  # encoder_sq_alpha=0.50,
-                                  encoder_sq_alpha=-1,
-                                  # decoder_sq_alpha=0.95,
-                                  decoder_sq_alpha=-1,
+                                  encoder_sq_alpha=0.50,
+                                  # encoder_sq_alpha=-1,
+                                  decoder_sq_alpha=0.95,
+                                  # decoder_sq_alpha=-1,
                                   cleanup_model=True)
     # continue
 
@@ -316,13 +318,13 @@ for i, calibration_dataset_size in enumerate(
         "time_int8": transcription_time_int8,
         "accuracy_int8": accuracy_int8
     }
-    if i == 0:
-        transcription_time_fp32, accuracy_fp32 = validate(ov_model, test_samples)
-        metrics_dict["time_fp32"] = transcription_time_fp32
-        metrics_dict["accuracy_fp32"] = accuracy_fp32
+    # if i == 0:
+    #     transcription_time_fp32, accuracy_fp32 = validate(ov_model, test_samples)
+    #     metrics_dict["time_fp32"] = transcription_time_fp32
+    #     metrics_dict["accuracy_fp32"] = accuracy_fp32
     print(f"\nSize: {calibration_dataset_size}. Metrics: {metrics_dict}\n")
     metrics_per_size.append(metrics_dict)
 
     save_dir.mkdir(exist_ok=True, parents=True)
-    with open(save_dir / f"test-size{test_dataset_size}_no_sq.json", "w") as f:
+    with open(save_dir / f"test-size{test_dataset_size}_sq_optimum-fix_att2.json", "w") as f:
         json.dump(metrics_per_size, f, indent=4)

@@ -48,6 +48,15 @@ def plot_distil_whisper():
         distil_whisper_large = json.load(f)
     with open("../notebooks/267-distil-whisper-asr/metrics/large-v2/common_voice_13_0/test-size1000_no-sq.json", "r") as f:
         distil_whisper_large_no_sq = json.load(f)
+    with open("../notebooks/267-distil-whisper-asr/metrics/large-v2/common_voice_13_0/test-size1000_sq_optimum-fix.json", "r") as f:
+        distil_whisper_large_sq_optimum_fix = json.load(f)
+
+    with open("../notebooks/267-distil-whisper-asr/metrics/large-v2/librispeech_asr/test-size1000_sq.json", "r") as f:
+        distil_whisper_large_librispeech = json.load(f)
+    with open("../notebooks/267-distil-whisper-asr/metrics/large-v2/librispeech_asr/test-size1000_no-sq.json", "r") as f:
+        distil_whisper_large_librispeech_no_sq = json.load(f)
+    with open("../notebooks/267-distil-whisper-asr/metrics/large-v2/librispeech_asr/test-size1000_sq_optimum-fix.json", "r") as f:
+        distil_whisper_large_librispeech_optimum_fix = json.load(f)
 
     # fp32_acc, xs, _ = plot_from_data(distil_whisper_without_shuffle, "Without shuffle")
     # fp32_acc_1000, xs, _ = plot_from_data(distil_whisper_with_shuffle, "1000 samples", "accuracy")
@@ -71,13 +80,18 @@ def plot_distil_whisper():
     # fp32_acc_100, _, _ = plot_from_data(distil_whisper_large_decoder_only_no_sq, "Quantized Decoder w/o SQ 100", "accuracy")
     # plt.hlines([fp32_acc_1000], xmin=min(xs), xmax=max(xs), colors='r', label="Baseline")
 
-    fp32_acc1, xs, _ = plot_from_data(distil_whisper_large, "Quantized w. SQ", "accuracy")
-    fp32_acc, _, _ = plot_from_data(distil_whisper_large_no_sq, "Quantized w/o SQ", "accuracy")
-    print(fp32_acc, fp32_acc1)
+    plot_from_data(distil_whisper_large, "Quantized w. SQ", "accuracy")
+    plot_from_data(distil_whisper_large_sq_optimum_fix, "Quantized w. SQ (optimum fix)", "accuracy")
+    fp32_acc, xs, _ = plot_from_data(distil_whisper_large_no_sq, "Quantized w/o SQ", "accuracy")
+
+    # plot_from_data(distil_whisper_large_librispeech, "Quantized w. SQ", "accuracy")
+    # plot_from_data(distil_whisper_large_librispeech_optimum_fix, "Quantized w. SQ (optimum fix)", "accuracy")
+    # fp32_acc, xs, _ = plot_from_data(distil_whisper_large_librispeech_no_sq, "Quantized w/o SQ", "accuracy")
 
     plt.hlines([fp32_acc], xmin=min(xs), xmax=max(xs), colors='r', label="Baseline")
 
     plt.ylabel("Accuracy on common_voice_13 (1000 samples)")
+    # plt.ylabel("Accuracy on librispeech (1000 samples)")
     plt.xlabel("Calibration dataset size")
     plt.title("Distil-Whisper large-v2")
     plt.tight_layout()
@@ -115,22 +129,28 @@ def plot_clip():
 
 
 def plot_grammar_correction():
-    with open("../notebooks/214-grammar-correction/metrics/flan-t5-large-grammar-synthesis/test_748"
-              "/metrics_2024-01-26 19-14-38.json", "r") as f:
-        values = json.load(f)
-    # with open("../notebooks/214-grammar-correction/metrics/grammar-synthesis-small/test_748"
-    #           "/metrics_2024-01-24 14-34-28.json", "r") as f:
+    # with open("../notebooks/214-grammar-correction/metrics/flan-t5-large-grammar-synthesis/test_748"
+    #           "/metrics_2024-01-26 19-14-38.json", "r") as f:
     #     values = json.load(f)
+
+    with open("../notebooks/214-grammar-correction/metrics/grammar-synthesis-small/test_748"
+              "/metrics_2024-01-24 14-34-28.json", "r") as f:
+        values = json.load(f)
+    with open("../notebooks/214-grammar-correction/metrics/grammar-synthesis-small/test_748"
+              "/metrics_2024-03-01 10-10-07_optimum-fix.json", "r") as f:
+        values_optimum_fix = json.load(f)
+
     # with open("../notebooks/214-grammar-correction/metrics/grammar-synthesis-small/test_748"
     #           "/metrics_2024-01-25 21-52-48.json", "r") as f:
     #     values_no_quantile = json.load(f)
 
     fp32_acc, xs, _ = plot_from_data(values, "Quantized", "accuracy")
+    plot_from_data(values_optimum_fix, "Quantized (optimum fix)", "accuracy")
     # plot_from_data(values_no_quantile, "Quantized (no quantile)", "accuracy")
     plt.hlines([fp32_acc], xmin=min(xs), xmax=max(xs), colors='C3', label="Baseline")
     plt.ylabel("Accuracy (748 samples)")
     plt.xlabel("Calibration dataset size")
-    plt.title("Grammar Correction(Large)")
+    plt.title("Grammar Correction(Small)")
     plt.tight_layout()
     plt.legend()
     plt.grid()
@@ -138,6 +158,6 @@ def plot_grammar_correction():
 
 
 if __name__ == '__main__':
-    plot_distil_whisper()
+    # plot_distil_whisper()
     # plot_clip()
-    # plot_grammar_correction()
+    plot_grammar_correction()

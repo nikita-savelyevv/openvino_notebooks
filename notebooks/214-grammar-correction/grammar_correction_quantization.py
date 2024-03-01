@@ -30,6 +30,8 @@ import openvino
 import openvino.runtime as ov
 import nncf
 
+from optimum.intel.openvino.quantization import InferRequestWrapper
+
 core = Core()
 
 # wer = load("wer")
@@ -54,8 +56,8 @@ decoder_with_past_total_time = 0
 
 total_corrected_tokens = 0
 
-# model_id = "grammar-synthesis-small"
-model_id = "flan-t5-large-grammar-synthesis"
+model_id = "grammar-synthesis-small"
+# model_id = "flan-t5-large-grammar-synthesis"
 grammar_corrector_model_id = f"pszemraj/{model_id}"
 grammar_corrector_dir = Path(model_id)
 
@@ -75,10 +77,11 @@ def load_grammar_cheker():
     grammar_checker_tokenizer = AutoTokenizer.from_pretrained(grammar_checker_model_id)
 
     if grammar_checker_dir.exists():
-        grammar_checker_model = OVModelForSequenceClassification.from_pretrained(grammar_checker_dir, device=DEVICE)
+        grammar_checker_model = OVModelForSequenceClassification.from_pretrained(
+            grammar_checker_dir, device=DEVICE, ov_config={"INFERENCE_PRECISION_HINT": "f32"})
     else:
-        grammar_checker_model = OVModelForSequenceClassification.from_pretrained(grammar_checker_model_id, export=True,
-                                                                                 device=DEVICE)
+        grammar_checker_model = OVModelForSequenceClassification.from_pretrained(
+            grammar_checker_model_id, export=True, device=DEVICE, ov_config={"INFERENCE_PRECISION_HINT": "f32"})
         grammar_checker_model.save_pretrained(grammar_checker_dir)
     grammar_checker_pipe = pipeline("text-classification", model=grammar_checker_model,
                                     tokenizer=grammar_checker_tokenizer)
@@ -89,10 +92,11 @@ def load_grammar_corrector():
     grammar_corrector_tokenizer = AutoTokenizer.from_pretrained(grammar_corrector_model_id)
 
     if grammar_corrector_dir.exists():
-        grammar_corrector_model = OVModelForSeq2SeqLM.from_pretrained(grammar_corrector_dir, device=DEVICE)
+        grammar_corrector_model = OVModelForSeq2SeqLM.from_pretrained(
+            grammar_corrector_dir, device=DEVICE, ov_config={"INFERENCE_PRECISION_HINT": "f32"})
     else:
-        grammar_corrector_model = OVModelForSeq2SeqLM.from_pretrained(grammar_corrector_model_id, export=True,
-                                                                      device=DEVICE)
+        grammar_corrector_model = OVModelForSeq2SeqLM.from_pretrained(
+            grammar_corrector_model_id, export=True, device=DEVICE, ov_config={"INFERENCE_PRECISION_HINT": "f32"})
         grammar_corrector_model.save_pretrained(grammar_corrector_dir)
     grammar_corrector_pipe = pipeline("text2text-generation", model=grammar_corrector_model,
                                       tokenizer=grammar_corrector_tokenizer)
@@ -245,7 +249,7 @@ def add_encoder_decoder_wrappers(encoder, decoder, decoder_with_past):
     wrap(decoder_with_past)
 
 
-def collect_calibration_data(ov_decoder, num_calibration_samples, load_calibration_data, save_calibration_data):
+def collect_calibration_data(ov_decoder, calibration_dataset, num_calibration_samples, load_calibration_data, save_calibration_data):
     calibration_data_file_path = CALIBRATION_DATA_CACHE / f"{num_calibration_samples}.pkl"
 
     if load_calibration_data and calibration_data_file_path.exists():
@@ -254,26 +258,14 @@ def collect_calibration_data(ov_decoder, num_calibration_samples, load_calibrati
     else:
         calibration_data = []
 
-        def wrap_for_data_collection(original_fn):
-            if original_fn.__name__ == "wrapper":
-                return
+        original_request = ov_decoder.request
+        ov_decoder.request = InferRequestWrapper(original_request, calibration_data)
 
-            def wrapper(*args, **kwargs):
-                inputs = kwargs.get("inputs", args[0])
-                if COLLECT_CALIBRATION_DATA:
-                    calibration_data.append(inputs)
-                return original_fn(*args, **kwargs)
-
-            ov_decoder.request.start_async = wrapper
-
-        original_fn = ov_decoder.request.start_async
-        wrap_for_data_collection(original_fn)
-
-        num_calibration_samples = min(num_calibration_samples, 755)
-        dataset = datasets.load_dataset("jfleg", split=f"validation").shuffle(seed=42)[:num_calibration_samples]
+        calibration_dataset = calibration_dataset[:num_calibration_samples]
 
         with calibration_data_collection():
-            for data_item in tqdm(dataset["sentence"], total=num_calibration_samples, desc="Collecting calibration data"):
+            for data_item in tqdm(calibration_dataset["sentence"], total=num_calibration_samples,
+                                  desc="Collecting calibration data"):
                 grammar_corrector_pipe(data_item)
 
         if save_calibration_data:
@@ -282,7 +274,7 @@ def collect_calibration_data(ov_decoder, num_calibration_samples, load_calibrati
             with open(calibration_data_file_path, 'wb') as f:
                 pickle.dump(calibration_data, f)
 
-        ov_decoder.request.start_async = original_fn
+        ov_decoder.request = original_request
 
     return calibration_data
 
@@ -498,6 +490,8 @@ test_dataset_size = 748
 test_dataset = datasets.load_dataset("jfleg", split="test").shuffle(seed=41)[:test_dataset_size]
 test_dataset = list(zip(*test_dataset.values()))
 
+calibration_dataset = datasets.load_dataset("jfleg", split=f"validation").shuffle(seed=42)
+
 fp32_acc = validate(grammar_corrector_pipe, dataset=test_dataset)
 # fp32_acc = None
 
@@ -505,13 +499,14 @@ save_dir = Path("metrics") / model_id / f"test_{test_dataset_size}"
 metrics_per_size = []
 start_time = datetime.datetime.now().strftime("%Y-%m-%d %H-%M-%S")
 for i, calibration_dataset_size in enumerate(
-    list(range(1, 100, 1)) +
+    [1] +
+    list(range(2, 100, 2)) +
     list(range(100, 751, 50))
     # list(range(2, 101, 2))
     # [1, 2]
     # [1, 91, 94, 300]
 ):
-    calibration_data = collect_calibration_data(ov_decoder, calibration_dataset_size,
+    calibration_data = collect_calibration_data(ov_decoder, calibration_dataset, calibration_dataset_size,
                                                 load_calibration_data=False, save_calibration_data=False)
     # continue
 
@@ -520,7 +515,7 @@ for i, calibration_dataset_size in enumerate(
     compress(grammar_corrector_pipe,
              quantize=True,
              load_existing_model=False,
-             save_model=True,
+             save_model=False,
              load_calibration_data=False,
              save_calibration_data=False,
              smooth_quant_alpha=0.95,
@@ -540,7 +535,7 @@ for i, calibration_dataset_size in enumerate(
     metrics_per_size.append(metrics_dict)
 
     save_dir.mkdir(exist_ok=True, parents=True)
-    with open(save_dir / f"metrics_{start_time}.json".replace(':', '%'), "w") as f:
+    with open(save_dir / f"metrics_{start_time}_optimum-fix.json".replace(':', '%'), "w") as f:
         json.dump(metrics_per_size, f, indent=4)
 
 # Text length: 408 tokens

@@ -252,8 +252,10 @@ def compare_sq_stats(xs, ys, target_node_name):
     # plt.show()
 
     plt.plot(xs, max_absmax, label='max stat')
-    ys = np.array(ys) / 100
-    plt.plot(xs, ys, label='Accuracy')
+    # ys = np.array(ys) / 100
+    # plt.plot(xs, ys, label='Accuracy')
+    plt.xlabel("Calibration dataset size")
+    plt.ylabel("Aggregated SQ statistic")
     plt.title(target_node_name)
     plt.grid(True)
     plt.legend()
