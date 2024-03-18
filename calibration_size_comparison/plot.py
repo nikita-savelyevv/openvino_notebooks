@@ -129,16 +129,19 @@ def plot_clip():
 
 
 def plot_grammar_correction():
-    # with open("../notebooks/214-grammar-correction/metrics/flan-t5-large-grammar-synthesis/test_748"
-    #           "/metrics_2024-01-26 19-14-38.json", "r") as f:
-    #     values = json.load(f)
-
-    with open("../notebooks/214-grammar-correction/metrics/grammar-synthesis-small/test_748"
-              "/metrics_2024-01-24 14-34-28.json", "r") as f:
+    with open("../notebooks/214-grammar-correction/metrics/flan-t5-large-grammar-synthesis/test_748"
+              "/metrics_2024-01-26 19-14-38.json", "r") as f:
         values = json.load(f)
-    with open("../notebooks/214-grammar-correction/metrics/grammar-synthesis-small/test_748"
-              "/metrics_2024-03-01 10-10-07_optimum-fix.json", "r") as f:
+    with open("../notebooks/214-grammar-correction/metrics/flan-t5-large-grammar-synthesis/test_748"
+              "/metrics_2024-03-01 13-15-29_optimum-fix.json", "r") as f:
         values_optimum_fix = json.load(f)
+
+    # with open("../notebooks/214-grammar-correction/metrics/grammar-synthesis-small/test_748"
+    #           "/metrics_2024-01-24 14-34-28.json", "r") as f:
+    #     values = json.load(f)
+    # with open("../notebooks/214-grammar-correction/metrics/grammar-synthesis-small/test_748"
+    #           "/metrics_2024-03-01 10-10-07_optimum-fix.json", "r") as f:
+    #     values_optimum_fix = json.load(f)
 
     # with open("../notebooks/214-grammar-correction/metrics/grammar-synthesis-small/test_748"
     #           "/metrics_2024-01-25 21-52-48.json", "r") as f:
@@ -150,7 +153,7 @@ def plot_grammar_correction():
     plt.hlines([fp32_acc], xmin=min(xs), xmax=max(xs), colors='C3', label="Baseline")
     plt.ylabel("Accuracy (748 samples)")
     plt.xlabel("Calibration dataset size")
-    plt.title("Grammar Correction(Small)")
+    plt.title("Grammar Correction (Large)")
     plt.tight_layout()
     plt.legend()
     plt.grid()
